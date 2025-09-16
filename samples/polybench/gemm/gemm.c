@@ -1,5 +1,5 @@
 #define N 2
-void test_gemm(float alpha, float beta, float C[N][N], float A[N][N],
+void gemm(float alpha, float beta, float C[N][N], float A[N][N],
                float B[N][N]) {
 #pragma scop
   for (int i = 0; i < N; i++) {
