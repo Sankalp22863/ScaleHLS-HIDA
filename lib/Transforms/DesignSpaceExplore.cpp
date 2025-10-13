@@ -13,6 +13,22 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include <numeric>
+#include <random>
+#include <iostream>
+// #include <Eigen/Dense>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+
+#include "llvm/Support/ThreadPool.h"
+#include "llvm/Support/Program.h"
+#include "llvm/Support/Path.h"
+#include <atomic>
+#include <filesystem>
+#include <iostream>
+// #include "GPModel.h"
 // #include <pthread.h>
 
 #define DEBUG_TYPE "scalehls"
@@ -823,6 +839,151 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
     return;
 }
 
+class CountingSemaphore {
+public:
+  explicit CountingSemaphore(int permits) : permits_(permits) {}
+
+  void acquire() {
+    std::unique_lock<std::mutex> lock(m_);
+    cv_.wait(lock, [&] { return permits_ > 0; });
+    --permits_;
+  }
+
+  void release() {
+    std::lock_guard<std::mutex> lock(m_);
+    ++permits_;
+    cv_.notify_one();
+  }
+
+private:
+  std::mutex m_;
+  std::condition_variable cv_;
+  int permits_;
+};
+
+
+// Helpers for the Parellel DSE run.
+
+static inline std::string sanitizeName(std::string s) {
+  for (char& c : s) if (!(std::isalnum((unsigned char)c) || c=='_' || c=='-')) c = '_';
+  return s;
+}
+
+
+template <typename ExplorerT>
+void runDSEInParallel(mlir::ModuleOp module,
+                      ExplorerT &explorer,
+                      bool directiveOnly,
+                      const std::filesystem::path &outRoot,
+                      const std::filesystem::path &csvRoot,
+                      int maxParallel = 0,
+                      bool clonePerKernel = false) {
+
+  std::cerr << "Running DSE in parallel..." << std::endl;
+  namespace fs = std::filesystem;
+  fs::create_directories(outRoot);
+  fs::create_directories(csvRoot);
+
+  if (maxParallel <= 0) {
+    unsigned hc = std::thread::hardware_concurrency();
+    // Having one task per core.
+    maxParallel = (hc == 0) ? 2 : (int)hc;
+    std::cerr << "Running DSE in parallel... with " << maxParallel << " threads." << std::endl;
+  }
+
+  // Bounded parallelism across kernels
+  CountingSemaphore gate(maxParallel);
+
+  std::vector<std::future<void>> futures;
+  futures.reserve(std::distance(module.getOps<mlir::func::FuncOp>().begin(),
+                                module.getOps<mlir::func::FuncOp>().end()));
+
+  for (auto func : module.getOps<mlir::func::FuncOp>()) {
+    // Only top functions are kernels
+    auto attrs = func->getAttrDictionary();
+    if (!attrs.contains("top_func"))
+      continue;
+
+    // Acquire a slot before launching
+    gate.acquire();
+
+
+    // Capture only what you need by value
+    auto funcName = sanitizeName(func.getName().str());
+    fs::path kernelOutDir = outRoot;
+    fs::path kernelCsv    = csvRoot;
+    // fs::path kernelOutDir = outRoot/ funcName;
+    // fs::path kernelCsv    = csvRoot/ (funcName + ".csv");
+
+    futures.emplace_back(std::async(std::launch::async, [=, &explorer, &gate]() {
+      std::error_code ec;
+        std::filesystem::create_directories(kernelOutDir, ec);
+
+        const auto tid = llvm::get_threadid();
+        std::cerr << "[THREAD " << tid << "] || Starting DSE for kernel: "
+                << funcName << " | Output: " << kernelOutDir << std::endl;
+
+        llvm::errs() << "[DBG] func=" << funcName << "\n";
+        llvm::errs() << "[DBG] outDir=" << kernelOutDir.string() << "\n";
+        llvm::errs() << "[DBG] csv=" << kernelCsv.string() << "\n";
+
+
+        // Now calling the function to be running in parellel.
+       explorer.applyDesignSpaceExplore(func,
+                                 directiveOnly,
+                                 kernelOutDir.string(),
+                                 kernelCsv.string());
+
+        std::cerr << "[THREAD " << tid << "] || Finished DSE for kernel: "
+                << funcName << " | Output: " << kernelOutDir << std::endl;
+
+      gate.release();
+    }));
+  }
+
+  for (auto &f : futures) f.get();
+
+  // mergeKernelCSVs(csvRoot, csvRoot / "merged.csv");
+}
+
+void mergeKernelCSVs(const std::filesystem::path& csvRoot, const std::filesystem::path& mergedCsvPath) {
+  std::ofstream out(mergedCsvPath);
+  if (!out) return;
+
+  bool wroteHeader = false;
+  for (auto& entry : std::filesystem::directory_iterator(csvRoot)) {
+    if (!entry.is_regular_file()) continue;
+    const auto& p = entry.path();
+    if (p.extension() != ".csv") continue;
+
+    std::ifstream in(p);
+    if (!in) continue;
+
+    std::string line;
+    std::string kernel = p.stem().string(); // filename without .csv
+
+    // Read header
+    if (std::getline(in, line)) {
+      // First file: write merged header with "Kernel" column
+      if (!wroteHeader) {
+        out << "Kernel," << line << '\n';
+        wroteHeader = true;
+      }
+      // For subsequent files, skip their header if it matches (simple heuristic)
+      else if (line.find(',') == std::string::npos || line.find("Latency") == std::string::npos) {
+        // header looks odd; treat it as data
+        out << kernel << ',' << line << '\n';
+      }
+    }
+    // Write data lines
+    while (std::getline(in, line)) {
+      if (line.empty()) continue;
+      out << kernel << ',' << line << '\n';
+    }
+  }
+  out.flush();
+}
+
 namespace {
 struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
   DesignSpaceExplore() = default;
@@ -893,11 +1054,18 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
 
     // Optimize the top function.
     // TODO: Support to contain sub-functions.
-    for (auto func : module.getOps<func::FuncOp>()) {
-      if (hasTopFuncAttr(func))
-        explorer.applyDesignSpaceExplore(func, directiveOnly, outputPath,
-                                         csvPath);
-    }
+    // for (auto func : module.getOps<func::FuncOp>()) {
+    //   if (hasTopFuncAttr(func))
+    //     explorer.applyDesignSpaceExplore(func, directiveOnly, outputPath,
+    //                                      csvPath);
+    // }
+
+    runDSEInParallel(module, explorer,
+          directiveOnly,
+          std::filesystem::path(outputPath.c_str()),
+          std::filesystem::path(csvPath.c_str()),
+          0,      // auto cores
+          false); // no cloning
   }
 };
 } // namespace
