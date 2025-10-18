@@ -65,6 +65,8 @@ public:
 
   void exploreLoopDesignSpace(unsigned maxIterNum, float maxDistance);
 
+  void exploreLoopDesignSpace(unsigned maxIterNum, float maxDistance, unsigned batchSize);
+
   /// Stores current pareto frontiers and all evaluated design points. The
   /// "allPoints" is mainly used for design space dumping, which is actually not
   /// used in the DSE procedure.
@@ -142,6 +144,8 @@ public:
 
   void dumpFuncDesignSpace(StringRef csvFilePath);
   bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath);
+  // Maps out.loopDesignSpaces[outIdx] -> original band index in targetBands
+  llvm::SmallVector<unsigned, 4> bandIndexMap;
 
   SmallVector<FuncDesignPoint, 16> paretoPoints;
 

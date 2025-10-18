@@ -819,10 +819,14 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
   }
 
   llvm::SmallVector<LoopDesignSpace, 4> loopSpaces;
+  llvm::SmallVector<unsigned, 4> loopSpaceOrigIdx;
   loopSpaces.reserve(N);
-  for (size_t i = 0; i < N; ++i)
+  loopSpaceOrigIdx.reserve(N);
+  for (size_t i = 0; i < N; ++i){
     loopSpaces.emplace_back(fClones[i], bandClones[i], estimator,
                             maxDspNum, maxExplParallel, maxLoopParallel, directiveOnly);
+    loopSpaceOrigIdx.push_back(i);
+  }
 
   std::vector<std::future<void>> fut;
   fut.reserve(N);
@@ -853,7 +857,16 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
 
   
   llvm::SmallVector<LoopDesignSpace, 4> filtered;
+  llvm::SmallVector<unsigned, 4> filteredOrigIdx;
   filtered.reserve(loopSpaces.size());
+  filteredOrigIdx.reserve(loopSpaces.size());
+  for (size_t i = 0; i < loopSpaces.size(); ++i) {
+    auto &ls = loopSpaces[i];
+    if (!ls.paretoPoints.empty()) {
+      filtered.push_back(std::move(ls));
+      filteredOrigIdx.push_back(loopSpaceOrigIdx[i]);
+    }
+  }
   for (auto &ls : loopSpaces) {
     if (!ls.paretoPoints.empty()) {
       filtered.push_back(std::move(ls));
@@ -865,8 +878,11 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
 
   funcDesignSpace.loopDesignSpaces.clear();
   funcDesignSpace.loopDesignSpaces.reserve(filtered.size());
-  for (auto &ls : filtered){
-    funcDesignSpace.loopDesignSpaces.push_back(std::move(ls));
+  funcDesignSpace.bandIndexMap = {};                                     // make this a member: SmallVector<unsigned,4>
+  funcDesignSpace.bandIndexMap.reserve(filteredOrigIdx.size());
+  for (size_t i = 0; i < filtered.size(); ++i) {
+    funcDesignSpace.loopDesignSpaces.push_back(std::move(filtered[i]));
+    funcDesignSpace.bandIndexMap.push_back(filteredOrigIdx[i]);  
   }
   
   funcDesignSpace.combLoopDesignSpaces();                          
@@ -882,21 +898,45 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
       std::vector<FactorList> tileLists;
       SmallVector<unsigned, 4> targetIIs;
 
-      for (unsigned i = 0; i < N; ++i) {
-        auto &loopSpace = funcDesignSpace.loopDesignSpaces[i];
-        auto &loopPoint = funcPoint.loopDesignPoints[i];
-        auto tileList = loopSpace.getTileList(loopPoint.tileConfig);
-        auto targetII = loopPoint.targetII;
+      // for (unsigned i = 0; i < N; ++i) {
+      //   auto &loopSpace = funcDesignSpace.loopDesignSpaces[i];
+      //   auto &loopPoint = funcPoint.loopDesignPoints[i];
+      //   auto tileList = loopSpace.getTileList(loopPoint.tileConfig);
+      //   auto targetII = loopPoint.targetII;
 
-        llvm::errs() << "Loop band " << i << ": "
-                                << "Loop tiling & pipelining config ( ";
-        for (auto tile : tileList) { llvm::errs() << tile << ","; };
-        llvm::errs() << targetII << ")\n";
+      //   llvm::errs() << "Loop band " << i << ": "
+      //                           << "Loop tiling & pipelining config ( ";
+      //   for (auto tile : tileList) { llvm::errs() << tile << ","; };
+      //   llvm::errs() << targetII << ")\n";
 
-        tileLists.push_back(tileList);
-        targetIIs.push_back(targetII);
+      //   tileLists.push_back(tileList);
+      //   targetIIs.push_back(targetII);
+      // }
+      mlir::scalehls::AffineLoopBands bandsNow;
+      getLoopBands(func.front(), bandsNow);
+      tileLists.reserve(funcDesignSpace.loopDesignSpaces.size());
+      targetIIs.reserve(funcDesignSpace.loopDesignSpaces.size());
+
+      for (size_t outIdx = 0; outIdx < funcDesignSpace.loopDesignSpaces.size(); ++outIdx) {
+        unsigned origIdx = funcDesignSpace.bandIndexMap[outIdx];
+
+        auto &loopSpace = funcDesignSpace.loopDesignSpaces[outIdx];
+        auto &loopPoint = funcPoint.loopDesignPoints[origIdx];
+
+        auto tiles = loopSpace.getTileList(loopPoint.tileConfig);
+
+        // Defensive: make tiles match the band loop count
+        const size_t want = bandsNow[outIdx].size();
+        if (tiles.size() > want) {
+          // drop extras (e.g., accidental II)
+          llvm::errs() << "Dropping extra tiles from band " << outIdx << "\n";
+          tiles.resize(want);       
+        }       
+        if (tiles.size() < want) tiles.resize(want, 1);
+
+        tileLists.push_back(std::move(tiles));
+        targetIIs.push_back(loopPoint.targetII);
       }
-
       if (!applyOptStrategy(func, tileLists, targetIIs))
       break;
     }
