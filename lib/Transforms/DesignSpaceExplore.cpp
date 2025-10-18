@@ -739,6 +739,172 @@ bool ScaleHLSExplorer::optimizeLoopBands(func::FuncOp func,
   return emitQoRDebugInfo(func, "\nFinish Stage2.");
 }
 
+class CountingSemaphore {
+public:
+  explicit CountingSemaphore(int permits) : permits_(permits) {}
+
+  void acquire() {
+    std::unique_lock<std::mutex> lock(m_);
+    cv_.wait(lock, [&] { return permits_ > 0; });
+    --permits_;
+  }
+
+  void release() {
+    std::lock_guard<std::mutex> lock(m_);
+    ++permits_;
+    cv_.notify_one();
+  }
+
+private:
+  std::mutex m_;
+  std::condition_variable cv_;
+  int permits_;
+};
+
+// If your project already typedefs this, remove this line.
+using AffineLoopBand = llvm::SmallVector<mlir::AffineForOp, 6>;
+
+struct SpaceItem {
+  LoopDesignSpace space;
+  unsigned origBandIdx;
+};
+
+
+// Final function to explore the design space of loop bands in parallel.
+FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
+                                             ArrayRef<AffineLoopBand> targetBands,
+                                             ScaleHLSEstimator &estimator,
+                                             unsigned maxDspNum,
+                                             unsigned maxExplParallel,
+                                             unsigned maxLoopParallel,
+                                             bool directiveOnly,
+                                             unsigned maxInitParallel,
+                                             unsigned maxIterNum,
+                                             float maxDistance,
+                                             llvm::StringRef csvRootPath,
+                                             unsigned maxParallel = 0)
+{
+  using AffineLoopBand = llvm::SmallVector<mlir::AffineForOp, 6>;
+  // Getting the csvRootPath and function name.
+  const std::string root = csvRootPath.str();
+  const std::string name = func.getName().str();
+
+  const size_t N = targetBands.size();
+
+   // Build an empty SmallVector and construct FuncDesignSpace with it.
+  llvm::SmallVector<LoopDesignSpace, 4> initial;
+  initial.reserve(N);                           
+  FuncDesignSpace funcDesignSpace(func, initial, estimator, maxDspNum);
+  funcDesignSpace.loopDesignSpaces.reserve(N);
+
+  //Cloning the module once per band so each thread has its own IR
+  auto parent = func->getParentOfType<mlir::ModuleOp>();
+  if (!parent || targetBands.empty()) {
+    auto emptyBase = func.clone();
+    llvm::SmallVector<LoopDesignSpace, 4> empty;
+    return FuncDesignSpace(emptyBase, empty, estimator, maxDspNum);
+  }
+
+  std::vector<mlir::OwningOpRef<mlir::ModuleOp>> modClones(N);
+  std::vector<mlir::func::FuncOp> fClones(N);
+  std::vector<AffineLoopBand> bandClones(N);
+
+  for (size_t i = 0; i < N; ++i) {
+    modClones[i] = mlir::cast<mlir::ModuleOp>(parent.clone());
+    auto f = modClones[i]->lookupSymbol<mlir::func::FuncOp>(name);
+    fClones[i] = f;
+    mlir::scalehls::AffineLoopBands bandsInClone;
+    getLoopBands(f.front(), bandsInClone);
+    bandClones[i] = bandsInClone[i];
+  }
+
+  llvm::SmallVector<LoopDesignSpace, 4> loopSpaces;
+  loopSpaces.reserve(N);
+  for (size_t i = 0; i < N; ++i)
+    loopSpaces.emplace_back(fClones[i], bandClones[i], estimator,
+                            maxDspNum, maxExplParallel, maxLoopParallel, directiveOnly);
+
+  std::vector<std::future<void>> fut;
+  fut.reserve(N);
+  unsigned hw = std::thread::hardware_concurrency();
+  unsigned lim = maxParallel ? maxParallel : (hw ? hw : 4);
+  std::atomic<unsigned> tickets{lim};
+
+  for (size_t i = 0; i < N; ++i) {
+    fut.emplace_back(std::async(std::launch::async, [&, i] {
+      llvm::errs() << "[PARELLEL] about to run V2, i='" << i << "'\n";
+      // naive ticketing to throttle
+      while (tickets.load() == 0) std::this_thread::yield();
+      tickets.fetch_sub(1);
+
+      auto &space = loopSpaces[i];
+      space.initializeLoopDesignSpace(maxInitParallel);
+      space.exploreLoopDesignSpace(maxIterNum, maxDistance);
+      // unique CSV per band
+      std::string csv = root + name + "_loop_" + std::to_string(i) + "_space.csv";
+      space.dumpLoopDesignSpace(csv);
+
+      tickets.fetch_add(1);
+      llvm::errs() << "[PARELLEL] Finished run V2 for , i='" << i << "'\n";
+    }));
+  }
+
+  for (auto &f : fut) f.get();
+
+  
+  llvm::SmallVector<LoopDesignSpace, 4> filtered;
+  filtered.reserve(loopSpaces.size());
+  for (auto &ls : loopSpaces) {
+    if (!ls.paretoPoints.empty()) {
+      filtered.push_back(std::move(ls));
+    }
+    else {
+      llvm::errs() << "[DSE] Band produced 0 points, dropping\n";
+    }
+  }
+
+  funcDesignSpace.loopDesignSpaces.clear();
+  funcDesignSpace.loopDesignSpaces.reserve(filtered.size());
+  for (auto &ls : filtered){
+    funcDesignSpace.loopDesignSpaces.push_back(std::move(ls));
+  }
+  
+  funcDesignSpace.combLoopDesignSpaces();                          
+
+  // Dump design points to csv file for each function.
+  auto funcCsvFilePath =
+      csvRootPath.str() + func.getName().str() + "_space.csv";
+  funcDesignSpace.dumpFuncDesignSpace(funcCsvFilePath);
+
+  // Apply the best function design point under the constraints.
+  for (auto &funcPoint : funcDesignSpace.paretoPoints) {
+    if (funcPoint.dspNum <= maxDspNum) {
+      std::vector<FactorList> tileLists;
+      SmallVector<unsigned, 4> targetIIs;
+
+      for (unsigned i = 0; i < N; ++i) {
+        auto &loopSpace = funcDesignSpace.loopDesignSpaces[i];
+        auto &loopPoint = funcPoint.loopDesignPoints[i];
+        auto tileList = loopSpace.getTileList(loopPoint.tileConfig);
+        auto targetII = loopPoint.targetII;
+
+        llvm::errs() << "Loop band " << i << ": "
+                                << "Loop tiling & pipelining config ( ";
+        for (auto tile : tileList) { llvm::errs() << tile << ","; };
+        llvm::errs() << targetII << ")\n";
+
+        tileLists.push_back(tileList);
+        targetIIs.push_back(targetII);
+      }
+
+      if (!applyOptStrategy(func, tileLists, targetIIs))
+      break;
+    }
+  }
+
+  return funcDesignSpace;
+}
+
 /// DSE Stage3: Explore the function design space through dynamic programming.
 bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
                                           StringRef outputRootPath,
@@ -750,66 +916,20 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
   AffineLoopBands targetBands;
   getLoopBands(tmpFunc.front(), targetBands);
   unsigned targetNum = targetBands.size();
+  using AffineLoopBand = llvm::SmallVector<mlir::AffineForOp, 6>;
+  std::vector<AffineLoopBand> bandStore;
+  bandStore.reserve(targetBands.size());
+  for (const auto &b : targetBands) bandStore.push_back(b);
 
-  // Search for the pareto frontiers of each target loop band.
-  SmallVector<LoopDesignSpace, 4> loopSpaces;
-  for (unsigned i = 0; i < targetNum; ++i) {
-    auto space =
-        LoopDesignSpace(tmpFunc, targetBands[i], estimator, maxDspNum,
-                        maxExplParallel, maxLoopParallel, directiveOnly);
+  std::cerr << "Before calling the DSE with csvRootPath as " << csvRootPath.str() << std::endl;
 
-    LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
-    space.initializeLoopDesignSpace(maxInitParallel);
-
-    LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
-    space.exploreLoopDesignSpace(maxIterNum, maxDistance);
-    loopSpaces.push_back(space);
-
-    // Dump design points to csv file for each loop band.
-    auto loopCsvFilePath = csvRootPath.str() + func.getName().str() + "_loop_" +
-                           std::to_string(i) + "_space.csv";
-    space.dumpLoopDesignSpace(loopCsvFilePath);
-  }
-
-  // Combine all loop design spaces into a function design space.
-  tmpFunc = func.clone();
-  auto funcSpace = FuncDesignSpace(tmpFunc, loopSpaces, estimator, maxDspNum);
-  funcSpace.combLoopDesignSpaces();
-
-  // Dump design points to csv file for each function.
-  auto funcCsvFilePath =
-      csvRootPath.str() + func.getName().str() + "_space.csv";
-  funcSpace.dumpFuncDesignSpace(funcCsvFilePath);
-
-  // Export sampled pareto points MLIR source.
-  funcSpace.exportParetoDesigns(outputNum, outputRootPath);
-
-  // Apply the best function design point under the constraints.
-  for (auto &funcPoint : funcSpace.paretoPoints) {
-    if (funcPoint.dspNum <= maxDspNum) {
-      std::vector<FactorList> tileLists;
-      SmallVector<unsigned, 4> targetIIs;
-
-      for (unsigned i = 0; i < targetNum; ++i) {
-        auto &loopSpace = funcSpace.loopDesignSpaces[i];
-        auto &loopPoint = funcPoint.loopDesignPoints[i];
-        auto tileList = loopSpace.getTileList(loopPoint.tileConfig);
-        auto targetII = loopPoint.targetII;
-
-        LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": "
-                                << "Loop tiling & pipelining (";);
-        LLVM_DEBUG(for (auto tile : tileList) { llvm::dbgs() << tile << ","; });
-        LLVM_DEBUG(llvm::dbgs() << targetII << ")\n");
-
-        tileLists.push_back(tileList);
-        targetIIs.push_back(targetII);
-      }
-
-      if (!applyOptStrategy(func, tileLists, targetIIs))
-        return false;
-      break;
-    }
-  }
+  llvm::errs() << "[CALL] about to run V2, csvRoot='" << csvRootPath << "'\n";
+  auto funcSpace = exploreLoopBandsInParallelV2(func, targetBands, estimator,
+                                                maxDspNum, maxExplParallel, maxLoopParallel,
+                                                directiveOnly, maxInitParallel, maxIterNum,
+                                                maxDistance, csvRootPath);
+  llvm::errs() << "[CALL] V2 finished for " << tmpFunc.getName() << "\n";
+ 
 
   return emitQoRDebugInfo(func, "\nFinish Stage3.");
 }
@@ -838,28 +958,6 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
   if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath))
     return;
 }
-
-class CountingSemaphore {
-public:
-  explicit CountingSemaphore(int permits) : permits_(permits) {}
-
-  void acquire() {
-    std::unique_lock<std::mutex> lock(m_);
-    cv_.wait(lock, [&] { return permits_ > 0; });
-    --permits_;
-  }
-
-  void release() {
-    std::lock_guard<std::mutex> lock(m_);
-    ++permits_;
-    cv_.notify_one();
-  }
-
-private:
-  std::mutex m_;
-  std::condition_variable cv_;
-  int permits_;
-};
 
 
 // Helpers for the Parellel DSE run.
