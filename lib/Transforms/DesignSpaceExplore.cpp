@@ -782,7 +782,9 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
                                              unsigned maxIterNum,
                                              float maxDistance,
                                              llvm::StringRef csvRootPath,
-                                             unsigned maxParallel = 0)
+                                             unsigned maxParallel, 
+                                             llvm::StringMap<int64_t> latencyMap,
+                                             llvm::StringMap<int64_t> dspMap)
 {
   using AffineLoopBand = llvm::SmallVector<mlir::AffineForOp, 6>;
   // Getting the csvRootPath and function name.
@@ -822,11 +824,24 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
   llvm::SmallVector<unsigned, 4> loopSpaceOrigIdx;
   loopSpaces.reserve(N);
   loopSpaceOrigIdx.reserve(N);
+
+  // Keeping one estimator for a single thread.
+  std::vector<std::unique_ptr<ScaleHLSEstimator>> estimators;
+  estimators.reserve(N);
+
   for (size_t i = 0; i < N; ++i){
-    loopSpaces.emplace_back(fClones[i], bandClones[i], estimator,
+    estimators.emplace_back(std::make_unique<ScaleHLSEstimator>(
+      latencyMap, dspMap, true));
+    loopSpaces.emplace_back(fClones[i], bandClones[i], *estimators.back(),
                             maxDspNum, maxExplParallel, maxLoopParallel, directiveOnly);
     loopSpaceOrigIdx.push_back(i);
   }
+
+  // for (size_t i = 0; i < N; ++i) {
+  //   loopSpaces.emplace_back(fClones[i], bandClones[i], *estimators[i],
+  //                           maxDspNum, maxExplParallel, maxLoopParallel, directiveOnly);
+  //   loopSpaceOrigIdx.push_back(i);
+  // }
 
   std::vector<std::future<void>> fut;
   fut.reserve(N);
@@ -948,7 +963,9 @@ FuncDesignSpace exploreLoopBandsInParallelV2(mlir::func::FuncOp func,
 /// DSE Stage3: Explore the function design space through dynamic programming.
 bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
                                           StringRef outputRootPath,
-                                          StringRef csvRootPath) {
+                                          StringRef csvRootPath, 
+                                          llvm::StringMap<int64_t> latencyMap,
+                                          llvm::StringMap<int64_t> dspMap) {
   LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: Conduct top function design "
                              "space exploration...\n";);
 
@@ -967,7 +984,7 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
   auto funcSpace = exploreLoopBandsInParallelV2(func, targetBands, estimator,
                                                 maxDspNum, maxExplParallel, maxLoopParallel,
                                                 directiveOnly, maxInitParallel, maxIterNum,
-                                                maxDistance, csvRootPath);
+                                                maxDistance, csvRootPath, 0, latencyMap, dspMap);
   llvm::errs() << "[CALL] V2 finished for " << tmpFunc.getName() << "\n";
  
 
@@ -982,7 +999,9 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
 void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
                                                bool directiveOnly,
                                                StringRef outputRootPath,
-                                               StringRef csvRootPath) {
+                                               StringRef csvRootPath, 
+                                               llvm::StringMap<int64_t> latencyMap, 
+                                               llvm::StringMap<int64_t> dspMap) {
   emitQoRDebugInfo(func, "Start multiple level DSE.");
 
   // Simplify loop nests by unrolling.
@@ -995,7 +1014,7 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
     return;
 
   // Explore the design space through a multiple level approach.
-  if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath))
+  if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath, latencyMap, dspMap))
     return;
 }
 
@@ -1014,8 +1033,10 @@ void runDSEInParallel(mlir::ModuleOp module,
                       bool directiveOnly,
                       const std::filesystem::path &outRoot,
                       const std::filesystem::path &csvRoot,
-                      int maxParallel = 0,
-                      bool clonePerKernel = false) {
+                      int maxParallel,
+                      bool clonePerKernel, 
+                      llvm::StringMap<int64_t> latencyMap, 
+                      llvm::StringMap<int64_t> dspMap) {
 
   std::cerr << "Running DSE in parallel..." << std::endl;
   namespace fs = std::filesystem;
@@ -1070,7 +1091,9 @@ void runDSEInParallel(mlir::ModuleOp module,
        explorer.applyDesignSpaceExplore(func,
                                  directiveOnly,
                                  kernelOutDir.string(),
-                                 kernelCsv.string());
+                                 kernelCsv.string(), 
+                                 latencyMap,
+                                 dspMap);
 
         std::cerr << "[THREAD " << tid << "] || Finished DSE for kernel: "
                 << funcName << " | Output: " << kernelOutDir << std::endl;
@@ -1203,7 +1226,9 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
           std::filesystem::path(outputPath.c_str()),
           std::filesystem::path(csvPath.c_str()),
           0,      // auto cores
-          false); // no cloning
+          false, 
+          latencyMap, 
+          dspUsageMap); // no cloning
   }
 };
 } // namespace

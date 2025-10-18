@@ -179,10 +179,13 @@ public:
   bool simplifyLoopNests(func::FuncOp func);
   bool optimizeLoopBands(func::FuncOp func, bool directiveOnly);
   bool exploreDesignSpace(func::FuncOp func, bool directiveOnly,
-                          StringRef outputRootPath, StringRef csvRootPath);
+                          StringRef outputRootPath, StringRef csvRootPath,
+                          llvm::StringMap<int64_t> latencyMap,
+                          llvm::StringMap<int64_t> dspMap);
 
   void applyDesignSpaceExplore(func::FuncOp func, bool directiveOnly,
-                               StringRef outputRootPath, StringRef csvRootPath);
+                               StringRef outputRootPath, StringRef csvRootPath, 
+                                llvm::StringMap<int64_t> latencyMap, llvm::StringMap<int64_t> dspMap);
 
   ScaleHLSEstimator &estimator;
 
