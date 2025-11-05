@@ -119,27 +119,79 @@ struct AddIRaisePattern : public OpRewritePattern<arith::AddIOp> {
 namespace {
 /// Simple arith.muli to affine.apply raising that only supports dim * constant.
 struct MulIRaisePattern : public OpRewritePattern<arith::MulIOp> {
-  using OpRewritePattern<arith::MulIOp>::OpRewritePattern;
+      using OpRewritePattern<arith::MulIOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(arith::MulIOp mul,
-                                PatternRewriter &r) const override {
-    r.setInsertionPoint(mul);
+      LogicalResult matchAndRewrite(arith::MulIOp mul,
+                                  PatternRewriter &r) const override {
+      // Only handle index math (affine.apply yields index).
+      if (!mul.getType().isIndex())
+        return r.notifyMatchFailure(mul, "result is not index");
 
-    if (auto rhs = mul.getRhs().getDefiningOp<arith::ConstantIndexOp>();
-        isValidDim(mul.getLhs())) {
-      r.replaceOpWithNewOp<mlir::AffineApplyOp>(
-          mul, r.getAffineDimExpr(0) * rhs.value(), mul.getLhs());
+      auto *ctx = r.getContext();
+      auto timing = mul->getAttr("hls.timing"); // may be null
+
+      auto getConstInt = [](Value v, int64_t &out) -> bool {
+        if (auto cidx = v.getDefiningOp<arith::ConstantIndexOp>()) {
+          out = cidx.value();
+          return true;
+        }
+        if (auto cop = v.getDefiningOp<arith::ConstantOp>()) {
+          if (auto ia = dyn_cast<IntegerAttr>(cop.getValue())) {
+            out = ia.getInt();
+            return true;
+          }
+        }
+        return false;
+      };
+
+      // Try both orders: (const * dim) or (dim * const)
+      int64_t c = 0;
+      Value dimVal;
+      if (getConstInt(mul.getLhs(), c) && isValidDim(mul.getRhs())) {
+        dimVal = mul.getRhs();
+      } else if (getConstInt(mul.getRhs(), c) && isValidDim(mul.getLhs())) {
+        dimVal = mul.getLhs();
+      } else {
+        return r.notifyMatchFailure(mul, "need integer constant * index-like");
+      }
+
+      // Quick folds.
+      if (c == 0) {
+        auto cst = r.replaceOpWithNewOp<arith::ConstantIndexOp>(mul, 0);
+        // propagate or default timing
+        if (timing)
+          cst->setAttr("hls.timing", timing);
+        else
+          cst->setAttr("hls.timing", TimingAttr::get(ctx, /*begin=*/0, /*end=*/0,
+                                   /*latency=*/1, /*interval=*/1));
+        return success();
+      }
+      if (c == 1) {
+        // No new op created; nothing to annotate.
+        r.replaceOp(mul, dimVal);
+        return success();
+      }
+
+      // Ensure operand passed to affine.apply is index-typed.
+      if (!dimVal.getType().isIndex())
+        dimVal = r.create<arith::IndexCastOp>(mul.getLoc(), r.getIndexType(), dimVal);
+
+      // Build map: (d0) -> (c * d0)
+      auto d0  = mlir::getAffineDimExpr(0, ctx);
+      auto cst = mlir::getAffineConstantExpr(c, ctx);
+      auto map = mlir::AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0, cst * d0);
+
+      r.setInsertionPoint(mul);
+      auto apply = r.replaceOpWithNewOp<mlir::AffineApplyOp>(mul, map, ValueRange{dimVal});
+      // propagate or default timing onto the new op
+      if (timing)
+        apply->setAttr("hls.timing", timing);
+      else
+        apply->setAttr("hls.timing", TimingAttr::get(ctx, /*begin=*/0, /*end=*/0,
+                                   /*latency=*/1, /*interval=*/1));
+
       return success();
     }
-
-    if (auto lhs = mul.getLhs().getDefiningOp<arith::ConstantIndexOp>();
-        isValidDim(mul.getRhs())) {
-      r.replaceOpWithNewOp<mlir::AffineApplyOp>(
-          mul, lhs.value() * r.getAffineDimExpr(0), mul.getRhs());
-      return success();
-    }
-    return failure();
-  }
 };
 } // namespace
 

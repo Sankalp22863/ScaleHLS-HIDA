@@ -664,7 +664,17 @@ TimingAttr ScaleHLSEstimator::estimateBlock(Block &block, int64_t begin) {
           // If the depOp has not been scheduled or its schedule level will not
           // impact the current operation's scheduling, stop and continue.
           auto sameLevelDstOp = getSameLevelDstOp(op, depOp);
-          auto depOpTiming = getTiming(sameLevelDstOp);
+          if (!sameLevelDstOp) {
+            // e.g., dependency points outside current level; skip safely
+            // (optional) op->emitRemark() << "no same-level dst op for dep " << depOp;
+            continue;
+          }
+          auto t = sameLevelDstOp->getAttrOfType<TimingAttr>("timing");
+          if (!t) {
+            t = TimingAttr::get(sameLevelDstOp->getContext(), /*begin=*/0, /*end=*/0, 1, 1);
+            sameLevelDstOp->setAttr("timing", t);   // or bail/continue
+          }
+          auto depOpTiming = t;
           if (!depOpTiming)
             continue;
 
