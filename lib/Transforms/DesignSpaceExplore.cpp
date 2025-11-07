@@ -957,13 +957,16 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
                                      maxLoopParallel, maxIterNum, maxDistance);
     LLVM_DEBUG(llvm::dbgs() << "[DSE] Explorer initialized successfully.\n");
 
-    // Optimize the top function.
+    // Optimize functions with loops.
+    // First explore top functions, then explore sub-functions that have loops.
     llvm::errs() << "[DSE] Starting design space exploration...\n";
     int exploredFuncCount = 0;
+    
+    // First pass: Explore all top functions
     for (auto func : module.getOps<func::FuncOp>()) {
       if (hasTopFuncAttr(func)) {
         exploredFuncCount++;
-        llvm::errs() << "[DSE] Exploring function: " << func.getName() << "\n";
+        llvm::errs() << "[DSE] Exploring top function: " << func.getName() << "\n";
         LLVM_DEBUG(llvm::dbgs() << "[DSE] Calling applyDesignSpaceExplore for " 
                                 << func.getName() << "...\n");
         explorer.applyDesignSpaceExplore(func, directiveOnly, outputPath,
@@ -971,10 +974,47 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
         llvm::errs() << "[DSE] Completed exploration for " << func.getName() << "\n";
       }
     }
+    
+    llvm::errs() << "[DSE] Checking sub-functions for loops...\n";
+    int subFuncExploredCount = 0;
+    int subFuncCheckedCount = 0;
+    for (auto func : module.getOps<func::FuncOp>()) {
+      // Skip top functions (already explored)
+      if (hasTopFuncAttr(func))
+        continue;
+      
+      // Skip functions without a body
+      if (func.getBody().empty())
+        continue;
+        
+      subFuncCheckedCount++;
+      // Check if this function has any loop bands
+      AffineLoopBands targetBands;
+      getLoopBands(func.front(), targetBands);
+      if (!targetBands.empty()) {
+        subFuncExploredCount++;
+        llvm::errs() << "[DSE] Exploring sub-function with loops: " << func.getName() 
+                     << " (" << targetBands.size() << " loop band(s))\n";
+        LLVM_DEBUG(llvm::dbgs() << "[DSE] Calling applyDesignSpaceExplore for " 
+                                << func.getName() << "...\n");
+        explorer.applyDesignSpaceExplore(func, directiveOnly, outputPath,
+                                         csvPath);
+        llvm::errs() << "[DSE] Completed exploration for " << func.getName() << "\n";
+      }
+    }
+    llvm::errs() << "[DSE] Checked " << subFuncCheckedCount 
+                 << " sub-function(s), " << subFuncExploredCount 
+                 << " had loops to explore\n";
+    
+    exploredFuncCount += subFuncExploredCount;
     if (exploredFuncCount == 0) {
-      llvm::errs() << "[DSE] WARNING: No top function found! DSE did not run.\n";
+      llvm::errs() << "[DSE] WARNING: No functions with loops found! DSE did not run.\n";
     } else {
-      llvm::errs() << "[DSE] Explored " << exploredFuncCount << " function(s)\n";
+      llvm::errs() << "[DSE] Explored " << exploredFuncCount << " function(s) total";
+      if (subFuncExploredCount > 0) {
+        llvm::errs() << " (" << subFuncExploredCount << " sub-function(s))";
+      }
+      llvm::errs() << "\n";
     }
     llvm::errs() << "[DSE] === DesignSpaceExplore Pass Completed ===\n";
   }
