@@ -97,7 +97,13 @@ struct ParallelizeDataflowNode
     auto compAnal = ComplexityAnalysis(func);
     nodeParallelFactorMap.clear();
 
+    unsigned scheduleCount = 0;
+    unsigned nodeCount = 0;
     func.walk<WalkOrder::PreOrder>([&](ScheduleOp schedule) {
+      scheduleCount++;
+      if (scheduleCount % 5 == 0) {
+        llvm::errs() << "[Phase 11.1] Processing schedule " << scheduleCount << "...\n";
+      }
       unsigned long scheduleUnrollFactor = maxUnrollFactor.getValue();
       if (auto parentNode = schedule->getParentOfType<NodeOp>()) {
         if (!nodeParallelFactorMap.count(parentNode)) {
@@ -122,6 +128,7 @@ struct ParallelizeDataflowNode
       }
 
       for (auto node : schedule.getOps<NodeOp>()) {
+        nodeCount++;
         auto nodeComplexity = compAnal.getNodeComplexity(node);
         if (!nodeComplexity.has_value()) {
           node.emitOpError("failed to get node complexity");
@@ -131,6 +138,10 @@ struct ParallelizeDataflowNode
                                         nodeComplexity.value() /
                                         scheduleComplexity.value();
         nodeParallelFactorMap.insert({node, nodeUnrollFactor});
+
+        if (nodeCount % 50 == 0) {
+          llvm::errs() << "[Phase 11.1]   Processed " << nodeCount << " nodes so far...\n";
+        }
 
         LLVM_DEBUG(
             // clang-format off
@@ -144,6 +155,8 @@ struct ParallelizeDataflowNode
       }
       return WalkResult::advance();
     });
+    llvm::errs() << "[Phase 11.1] Completed: " << scheduleCount << " schedules, " 
+                 << nodeCount << " nodes processed.\n";
   }
 
   /// Unroll dataflow node with the given parallel factor. If the pass is not
@@ -202,7 +215,23 @@ struct ParallelizeDataflowNode
 
     // Optimize the unroll factors from the most critical node.
     llvm::SmallDenseMap<NodeOp, FactorList> nodeUnrollFactorsMap;
+    unsigned initialWorklistSize = worklist.size();
+    unsigned processedNodes = 0;
+    unsigned maxIterations = initialWorklistSize * 10; // Safety limit to detect infinite loops
+    llvm::errs() << "[Phase 11.2] Starting correlation-aware optimization with " 
+                 << initialWorklistSize << " nodes in initial worklist...\n";
     while (!worklist.empty()) {
+      processedNodes++;
+      if (processedNodes > maxIterations) {
+        llvm::errs() << "[Phase 11.2] WARNING: Exceeded max iterations (" << maxIterations 
+                     << "). Possible infinite loop! Breaking...\n";
+        break;
+      }
+      if (processedNodes % 10 == 0 || processedNodes == 1) {
+        llvm::errs() << "[Phase 11.2] Processing iteration " << processedNodes 
+                     << " (worklist size: " << worklist.size() << ", processed: " 
+                     << nodeUnrollFactorsMap.size() << ")...\n";
+      }
       auto current = worklist.pop_back_val();
       auto node = current.first;
       auto corrNum = current.second;
@@ -303,7 +332,15 @@ struct ParallelizeDataflowNode
 
     // Apply unroll and jam to loops that is successfully calculated for
     // correlation-aware unroll factors.
+    llvm::errs() << "[Phase 11.2] Applying unroll and jam to " 
+                 << nodeUnrollFactorsMap.size() << " correlated nodes...\n";
+    unsigned unrollJamIdx = 0;
     for (auto p : nodeUnrollFactorsMap) {
+      unrollJamIdx++;
+      if (unrollJamIdx % 10 == 0 || unrollJamIdx == nodeUnrollFactorsMap.size()) {
+        llvm::errs() << "[Phase 11.2]   Unroll-jam " << unrollJamIdx << "/" 
+                     << nodeUnrollFactorsMap.size() << "...\n";
+      }
       auto band = getNodeLoopBand(p.first);
       // if (hasEffectOnExternalBuffer(band.front()))
       //   applyLoopVectorization(band, p.second);
@@ -312,25 +349,64 @@ struct ParallelizeDataflowNode
     }
 
     // Apply naive unroll to other loops.
+    unsigned naiveUnrollCount = 0;
     for (auto p : nodeParallelFactorMap)
       if (!nodeUnrollFactorsMap.count(p.first))
-        applyNaiveLoopUnroll(p.first, p.second);
+        naiveUnrollCount++;
+    
+    if (naiveUnrollCount > 0) {
+      llvm::errs() << "[Phase 11.2] Applying naive unroll to " 
+                   << naiveUnrollCount << " remaining nodes...\n";
+      unsigned naiveIdx = 0;
+      for (auto p : nodeParallelFactorMap) {
+        if (!nodeUnrollFactorsMap.count(p.first)) {
+          naiveIdx++;
+          if (naiveIdx % 10 == 0 || naiveIdx == naiveUnrollCount) {
+            llvm::errs() << "[Phase 11.2]   Naive unroll " << naiveIdx << "/" 
+                         << naiveUnrollCount << "...\n";
+          }
+          applyNaiveLoopUnroll(p.first, p.second);
+        }
+      }
+    }
+    llvm::errs() << "[Phase 11.2] Correlation-aware optimization complete.\n";
   }
 
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 11: Parallelizing dataflow nodes (function: " 
+                 << getOperation().getName() << ")\n";
     auto func = getOperation();
     auto context = func.getContext();
+    
+    llvm::errs() << "[Phase 11] Step 1: Getting node parallel factor map...\n";
     getNodeParallelFactorMap(func);
-    if (correlationAware)
+    llvm::errs() << "[Phase 11] Step 1 complete. Found " << nodeParallelFactorMap.size() 
+                 << " nodes to process.\n";
+    
+    if (correlationAware) {
+      llvm::errs() << "[Phase 11] Step 2: Applying correlation-aware unroll (this may take a while)...\n";
       applyCorrelationAwareUnroll(func);
-    else {
-      for (auto p : nodeParallelFactorMap)
+      llvm::errs() << "[Phase 11] Step 2 complete.\n";
+    } else {
+      llvm::errs() << "[Phase 11] Step 2: Applying naive loop unroll to " 
+                   << nodeParallelFactorMap.size() << " nodes...\n";
+      unsigned nodeIdx = 0;
+      for (auto p : nodeParallelFactorMap) {
+        nodeIdx++;
+        if (nodeIdx % 10 == 0 || nodeIdx == nodeParallelFactorMap.size()) {
+          llvm::errs() << "[Phase 11]   Unrolling node " << nodeIdx << "/" 
+                       << nodeParallelFactorMap.size() << "...\n";
+        }
         applyNaiveLoopUnroll(p.first, p.second);
+      }
+      llvm::errs() << "[Phase 11] Step 2 complete.\n";
     }
 
+    llvm::errs() << "[Phase 11] Step 3: Generating buffer layouts...\n";
     mlir::RewritePatternSet patterns(context);
     patterns.add<GenerateBufferLayout>(context);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+    llvm::errs() << "[Phase 11] Step 3 complete. Phase 11 finished.\n";
   }
 
 private:

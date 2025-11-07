@@ -6,6 +6,9 @@
 
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Transforms/Passes.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -76,6 +79,8 @@ namespace {
 struct MaterializeReduction
     : public MaterializeReductionBase<MaterializeReduction> {
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Pre-DSE: Materializing reductions (function: " 
+                 << getOperation().getName() << ")\n";
     auto func = getOperation();
     mlir::RewritePatternSet patterns(func.getContext());
     patterns.add<MaterializeReductionPattern>(func.getContext());

@@ -9,6 +9,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -222,6 +225,7 @@ struct ConvertDataflowToFunc
   }
 
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 13: Converting dataflow to func\n";
     auto module = getOperation();
     auto context = module.getContext();
 

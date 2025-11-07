@@ -6,6 +6,9 @@
 
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -61,6 +64,8 @@ bool scalehls::applyLoopPipelining(AffineLoopBand &band, unsigned pipelineLoc,
 namespace {
 struct LoopPipelining : public LoopPipeliningBase<LoopPipelining> {
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 14: Applying loop pipelining (function: " 
+                 << getOperation().getName() << ")\n";
     // Collect all target loop bands.
     AffineLoopBands targetBands;
     getLoopBands(getOperation().front(), targetBands);

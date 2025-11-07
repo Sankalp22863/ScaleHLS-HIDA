@@ -7,6 +7,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -22,6 +25,8 @@ struct CreateLocalBuffer
   }
 
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 8: Creating local buffers (function: " 
+                 << getOperation().getName() << ")\n";
     auto func = getOperation();
     auto builder = OpBuilder(func);
 

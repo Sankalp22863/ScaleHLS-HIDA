@@ -7,6 +7,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -15,6 +18,8 @@ using namespace hls;
 namespace {
 struct CreateTokenStream : public CreateTokenStreamBase<CreateTokenStream> {
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 13 (start): Creating token streams (function: " 
+                 << getOperation().getName() << ")\n";
     auto func = getOperation();
     auto context = func.getContext();
     OpBuilder b(context);

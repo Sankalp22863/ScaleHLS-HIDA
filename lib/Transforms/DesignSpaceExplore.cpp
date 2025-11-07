@@ -434,6 +434,14 @@ void FuncDesignSpace::dumpFuncDesignSpace(StringRef csvFilePath) {
 void FuncDesignSpace::combLoopDesignSpaces() {
   LLVM_DEBUG(llvm::dbgs() << "Combine the loop design spaces...\n";);
 
+  // Check if there are any loop design spaces to combine.
+  if (loopDesignSpaces.empty()) {
+    llvm::errs() << "[DSE] WARNING: No loop bands found in function '" 
+                 << func.getName() << "'. Skipping design space exploration.\n";
+    LLVM_DEBUG(llvm::dbgs() << "No loop design spaces to combine.\n";);
+    return;
+  }
+
   // Initialize the function design space with the first loop design space.
   auto &firstLoopSpace = loopDesignSpaces[0];
   for (auto &loopPoint : firstLoopSpace.paretoPoints) {
@@ -735,6 +743,9 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
   getLoopBands(tmpFunc.front(), targetBands);
   unsigned targetNum = targetBands.size();
 
+  llvm::errs() << "[DSE] Found " << targetNum << " loop band(s) in function '" 
+               << func.getName() << "'\n";
+
   // Search for the pareto frontiers of each target loop band.
   SmallVector<LoopDesignSpace, 4> loopSpaces;
   for (unsigned i = 0; i < targetNum; ++i) {
@@ -756,6 +767,12 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
   }
 
   // Combine all loop design spaces into a function design space.
+  if (loopSpaces.empty()) {
+    llvm::errs() << "[DSE] WARNING: No loop bands to explore for function '" 
+                 << func.getName() << "'. Skipping DSE.\n";
+    return true; // Return success even if no loops found
+  }
+
   tmpFunc = func.clone();
   auto funcSpace = FuncDesignSpace(tmpFunc, loopSpaces, estimator, maxDspNum);
   funcSpace.combLoopDesignSpaces();
@@ -829,30 +846,57 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
   DesignSpaceExplore(std::string dseTargetSpec) { targetSpec = dseTargetSpec; }
 
   void runOnOperation() override {
+    // Always print pass start to confirm execution reached here
+    llvm::errs() << "[DSE] === DesignSpaceExplore Pass Started ===\n";
+    llvm::errs() << "[DSE] Target spec file: " << targetSpec << "\n";
+    
     auto module = getOperation();
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Module obtained. Functions: ");
+    
+    int funcCount = 0;
+    int topFuncCount = 0;
+    for (auto func : module.getOps<func::FuncOp>()) {
+      funcCount++;
+      bool isTop = hasTopFuncAttr(func);
+      if (isTop) topFuncCount++;
+      LLVM_DEBUG(llvm::dbgs() << "\n  - " << func.getName() 
+                              << (isTop ? " (TOP)" : ""));
+    }
+    LLVM_DEBUG(llvm::dbgs() << "\nTotal functions: " << funcCount << "\n");
+    
+    llvm::errs() << "[DSE] Found " << funcCount << " function(s), " 
+                 << topFuncCount << " top function(s)\n";
 
     // Read target specification JSON file.
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Reading target specification from: " 
+                            << targetSpec << "\n");
     std::string errorMessage;
     auto configFile = mlir::openInputFile(targetSpec, &errorMessage);
     if (!configFile) {
-      llvm::errs() << errorMessage << "\n";
+      llvm::errs() << "[DSE] ERROR: Failed to open config file: " 
+                   << errorMessage << "\n";
       return signalPassFailure();
     }
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Config file read successfully.\n");
 
     // Parse JSON file into memory.
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Parsing JSON configuration...\n");
     auto config = llvm::json::parse(configFile->getBuffer());
     if (!config) {
-      llvm::errs() << "failed to parse the target spec json file\n";
+      llvm::errs() << "[DSE] ERROR: Failed to parse the target spec json file\n";
       return signalPassFailure();
     }
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] JSON parsed successfully.\n");
+    
     auto configObj = config.get().getAsObject();
     if (!configObj) {
-      llvm::errs() << "support an object in the target spec json file, found "
-                      "something else\n";
+      llvm::errs() << "[DSE] ERROR: Expected an object in the target spec json file, "
+                      "found something else\n";
       return signalPassFailure();
     }
 
     // Collect DSE configurations.
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Loading DSE configuration parameters...\n");
     unsigned outputNum = configObj->getInteger("output_num").value_or(30);
 
     unsigned maxInitParallel =
@@ -885,19 +929,54 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
     if (!resourceConstr)
       maxDspNum = UINT_MAX;
 
+    // Get output paths from config or use defaults
+    std::string outputPathStr = configObj->getString("output_path").value_or("./dse_output").str();
+    std::string csvPathStr = configObj->getString("csv_path").value_or("./dse_csv").str();
+    StringRef outputPath(outputPathStr);
+    StringRef csvPath(csvPathStr);
+
     // Initialize an performance and resource estimator.
+    llvm::errs() << "[DSE] Initializing estimator and explorer...\n";
+    LLVM_DEBUG({
+      llvm::dbgs() << "[DSE] Configuration:\n";
+      llvm::dbgs() << "  outputNum: " << outputNum << "\n";
+      llvm::dbgs() << "  maxDspNum: " << maxDspNum << "\n";
+      llvm::dbgs() << "  maxInitParallel: " << maxInitParallel << "\n";
+      llvm::dbgs() << "  maxExplParallel: " << maxExplParallel << "\n";
+      llvm::dbgs() << "  maxLoopParallel: " << maxLoopParallel << "\n";
+      llvm::dbgs() << "  maxIterNum: " << maxIterNum << "\n";
+      llvm::dbgs() << "  maxDistance: " << maxDistance << "\n";
+      llvm::dbgs() << "  directiveOnly: " << (directiveOnly ? "true" : "false") << "\n";
+      llvm::dbgs() << "  outputPath: " << outputPath << "\n";
+      llvm::dbgs() << "  csvPath: " << csvPath << "\n";
+    });
+    
     auto estimator = ScaleHLSEstimator(latencyMap, dspUsageMap, true);
     auto explorer = ScaleHLSExplorer(estimator, outputNum, maxDspNum,
                                      maxInitParallel, maxExplParallel,
                                      maxLoopParallel, maxIterNum, maxDistance);
+    LLVM_DEBUG(llvm::dbgs() << "[DSE] Explorer initialized successfully.\n");
 
     // Optimize the top function.
-    // TODO: Support to contain sub-functions.
+    llvm::errs() << "[DSE] Starting design space exploration...\n";
+    int exploredFuncCount = 0;
     for (auto func : module.getOps<func::FuncOp>()) {
-      if (hasTopFuncAttr(func))
+      if (hasTopFuncAttr(func)) {
+        exploredFuncCount++;
+        llvm::errs() << "[DSE] Exploring function: " << func.getName() << "\n";
+        LLVM_DEBUG(llvm::dbgs() << "[DSE] Calling applyDesignSpaceExplore for " 
+                                << func.getName() << "...\n");
         explorer.applyDesignSpaceExplore(func, directiveOnly, outputPath,
                                          csvPath);
+        llvm::errs() << "[DSE] Completed exploration for " << func.getName() << "\n";
+      }
     }
+    if (exploredFuncCount == 0) {
+      llvm::errs() << "[DSE] WARNING: No top function found! DSE did not run.\n";
+    } else {
+      llvm::errs() << "[DSE] Explored " << exploredFuncCount << " function(s)\n";
+    }
+    llvm::errs() << "[DSE] === DesignSpaceExplore Pass Completed ===\n";
   }
 };
 } // namespace

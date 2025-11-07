@@ -9,6 +9,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -135,6 +138,8 @@ struct LowerDataflow : public LowerDataflowBase<LowerDataflow> {
   }
 
   void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 10: Lowering and optimizing dataflow (function: " 
+                 << getOperation().getName() << ")\n";
     auto func = getOperation();
     auto context = func.getContext();
     auto builder = OpBuilder(context);

@@ -8,6 +8,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "scalehls/Dialect/HLS/Utils.h"
 #include "scalehls/Transforms/Passes.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "scalehls"
 
 using namespace mlir;
 using namespace scalehls;
@@ -127,7 +130,11 @@ static bool applySimplifyAffineIf(func::FuncOp func) {
 
 namespace {
 struct SimplifyAffineIf : public SimplifyAffineIfBase<SimplifyAffineIf> {
-  void runOnOperation() override { applySimplifyAffineIf(getOperation()); }
+  void runOnOperation() override {
+    llvm::errs() << "[HIDA Pipeline] Phase 12: Simplifying affine if (function: " 
+                 << getOperation().getName() << ")\n";
+    applySimplifyAffineIf(getOperation());
+  }
 };
 } // namespace
 
