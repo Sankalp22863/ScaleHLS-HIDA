@@ -27,7 +27,7 @@ static void updateSubFuncs(func::FuncOp func, Builder builder) {
         if (!callee) {
           llvm::errs() << "Warning: Cannot find callee for call op: " 
                        << op << " (skipping sub-function processing)\n";
-          signalPassFailure();
+          assert(false && "Cannot find callee for call op");
         }
       }
     }
@@ -435,7 +435,7 @@ bool scalehls::applyAutoArrayPartition(func::FuncOp func, unsigned threshold) {
         if (!callee) {
           llvm::errs() << "Warning: Cannot find callee for call op: " 
                       << op << " (skipping sub-function processing)\n";
-          signalPassFailure();
+          assert(false && "Cannot find callee for call op");
         }
       }
     }

@@ -578,7 +578,7 @@ bool ScaleHLSEstimator::visitOp(func::CallOp op, int64_t begin) {
       if (!callee) {
         llvm::errs() << "Warning: Cannot find callee for call op: " 
                      << op << " (skipping sub-function processing)\n";
-        signalPassFailure();
+        assert(false && "Cannot find callee for call op");
       }
     }
   }
