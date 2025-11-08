@@ -930,8 +930,8 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
       maxDspNum = UINT_MAX;
 
     // Get output paths from config or use defaults
-    std::string outputPathStr = configObj->getString("output_path").value_or("./dse_output").str();
-    std::string csvPathStr = configObj->getString("csv_path").value_or("./dse_csv").str();
+    std::string outputPathStr = configObj->getString("output_path").value_or("./dse_output/").str();
+    std::string csvPathStr = configObj->getString("csv_path").value_or("./dse_csv/").str();
     StringRef outputPath(outputPathStr);
     StringRef csvPath(csvPathStr);
 

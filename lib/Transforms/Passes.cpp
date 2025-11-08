@@ -37,6 +37,10 @@ struct ScaleHLSDSEPipelineOptions
       *this, "target-spec", llvm::cl::init("./config.json"),
       llvm::cl::desc(
           "File path: target backend specifications and configurations")};
+
+  Option<unsigned> debugPoint{
+      *this, "debug-point", llvm::cl::init(0),
+      llvm::cl::desc("Stop the pipeline at the given debug point")};
 };
 } // namespace
 
@@ -48,6 +52,9 @@ void scalehls::registerScaleHLSDSEPipeline() {
         // Legalize the input program.
         pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
         pm.addPass(scalehls::createMaterializeReductionPass());
+
+        if (opts.debugPoint == 1)
+          return;
 
         // Apply the automatic design space exploration to the top function.
         pm.addPass(scalehls::createDesignSpaceExplorePass(opts.dseTargetSpec));
