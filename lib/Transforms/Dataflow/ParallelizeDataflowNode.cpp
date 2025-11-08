@@ -332,15 +332,7 @@ struct ParallelizeDataflowNode
 
     // Apply unroll and jam to loops that is successfully calculated for
     // correlation-aware unroll factors.
-    llvm::errs() << "[Phase 11.2] Applying unroll and jam to " 
-                 << nodeUnrollFactorsMap.size() << " correlated nodes...\n";
-    unsigned unrollJamIdx = 0;
     for (auto p : nodeUnrollFactorsMap) {
-      unrollJamIdx++;
-      if (unrollJamIdx % 10 == 0 || unrollJamIdx == nodeUnrollFactorsMap.size()) {
-        llvm::errs() << "[Phase 11.2]   Unroll-jam " << unrollJamIdx << "/" 
-                     << nodeUnrollFactorsMap.size() << "...\n";
-      }
       auto band = getNodeLoopBand(p.first);
       // if (hasEffectOnExternalBuffer(band.front()))
       //   applyLoopVectorization(band, p.second);
@@ -349,26 +341,9 @@ struct ParallelizeDataflowNode
     }
 
     // Apply naive unroll to other loops.
-    unsigned naiveUnrollCount = 0;
     for (auto p : nodeParallelFactorMap)
       if (!nodeUnrollFactorsMap.count(p.first))
-        naiveUnrollCount++;
-    
-    if (naiveUnrollCount > 0) {
-      llvm::errs() << "[Phase 11.2] Applying naive unroll to " 
-                   << naiveUnrollCount << " remaining nodes...\n";
-      unsigned naiveIdx = 0;
-      for (auto p : nodeParallelFactorMap) {
-        if (!nodeUnrollFactorsMap.count(p.first)) {
-          naiveIdx++;
-          if (naiveIdx % 10 == 0 || naiveIdx == naiveUnrollCount) {
-            llvm::errs() << "[Phase 11.2]   Naive unroll " << naiveIdx << "/" 
-                         << naiveUnrollCount << "...\n";
-          }
-          applyNaiveLoopUnroll(p.first, p.second);
-        }
-      }
-    }
+        applyNaiveLoopUnroll(p.first, p.second);
     llvm::errs() << "[Phase 11.2] Correlation-aware optimization complete.\n";
   }
 
@@ -383,30 +358,20 @@ struct ParallelizeDataflowNode
     llvm::errs() << "[Phase 11] Step 1 complete. Found " << nodeParallelFactorMap.size() 
                  << " nodes to process.\n";
     
+    llvm::errs() << "[Phase 11] Step 2: Applying unroll...\n";
     if (correlationAware) {
-      llvm::errs() << "[Phase 11] Step 2: Applying correlation-aware unroll (this may take a while)...\n";
       applyCorrelationAwareUnroll(func);
-      llvm::errs() << "[Phase 11] Step 2 complete.\n";
     } else {
-      llvm::errs() << "[Phase 11] Step 2: Applying naive loop unroll to " 
-                   << nodeParallelFactorMap.size() << " nodes...\n";
-      unsigned nodeIdx = 0;
-      for (auto p : nodeParallelFactorMap) {
-        nodeIdx++;
-        if (nodeIdx % 10 == 0 || nodeIdx == nodeParallelFactorMap.size()) {
-          llvm::errs() << "[Phase 11]   Unrolling node " << nodeIdx << "/" 
-                       << nodeParallelFactorMap.size() << "...\n";
-        }
+      for (auto p : nodeParallelFactorMap)
         applyNaiveLoopUnroll(p.first, p.second);
-      }
-      llvm::errs() << "[Phase 11] Step 2 complete.\n";
     }
+    llvm::errs() << "[Phase 11] Step 2 complete.\n";
 
     llvm::errs() << "[Phase 11] Step 3: Generating buffer layouts...\n";
     mlir::RewritePatternSet patterns(context);
     patterns.add<GenerateBufferLayout>(context);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
-    llvm::errs() << "[Phase 11] Step 3 complete. Phase 11 finished.\n";
+    llvm::errs() << "[Phase 11] Step 3 complete.\n";
   }
 
 private:
