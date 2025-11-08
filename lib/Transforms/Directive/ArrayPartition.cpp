@@ -15,34 +15,23 @@ using namespace scalehls;
 using namespace hls;
 
 static void updateSubFuncs(func::FuncOp func, Builder builder) {
-  // Check if function is in a module context before processing.
-  // During DSE, functions may be cloned outside a module, so we need to check
-  // if symbol lookup will work. We do this by checking if the function has a parent.
-  auto parentOp = func->getParentOp();
-  if (!parentOp) {
-    // Function is not in any parent operation (e.g., cloned standalone)
-    LLVM_DEBUG(llvm::dbgs() << "Skipping updateSubFuncs for function " 
-                            << func.getName() << " (no parent operation)\n";);
-    return;
-  }
-  
   func.walk([&](func::CallOp op) {
-    // Try to look up the callee - if it fails, skip processing
     auto callee = SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr());
+    // If nearest symbol lookup failed, try module-level lookup as fallback.
+    // This can happen during DSE when functions/loops are cloned and inserted
+    // into contexts where the symbol table chain is broken.
     if (!callee) {
-      // Callee not found - skip (may be external or in different context, e.g., during DSE)
-      LLVM_DEBUG(llvm::dbgs() << "Warning: Cannot find callee for call op in updateSubFuncs: " 
-                              << op << "\n";);
-      return;
+      auto calleeName = op.getCallee();
+      if (auto module = op->getParentOfType<ModuleOp>()) {
+        callee = module.lookupSymbol(calleeName);
+        if (!callee) {
+          llvm::errs() << "Warning: Cannot find callee for call op: " 
+                       << op << " (skipping sub-function processing)\n";
+          signalPassFailure();
+        }
+      }
     }
-    
     auto subFunc = dyn_cast<func::FuncOp>(callee);
-    if (!subFunc) {
-      // Callee is not a FuncOp - skip
-      LLVM_DEBUG(llvm::dbgs() << "Warning: Callee is not a FuncOp in updateSubFuncs: " 
-                              << *callee << "\n";);
-      return;
-    }
 
     // Set sub-function type.
     auto subResultTypes = op.getResultTypes();
@@ -433,26 +422,26 @@ bool scalehls::applyAutoArrayPartition(func::FuncOp func, unsigned threshold) {
 
   // Apply partition to all sub-functions and traverse all function to update
   // the "partitionsMap".
-  // Note: During DSE, functions may be cloned outside a module. Symbol lookup
-  // will fail in that case, so we handle it gracefully by checking for null callee.
   func.walk([&](func::CallOp op) {
-    // Try to look up the callee - if it fails (e.g., during DSE with cloned functions),
-    // skip processing this call operation.
     auto callee = SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr());
+
+    // If nearest symbol lookup failed, try module-level lookup as fallback.
+    // This can happen during DSE when functions/loops are cloned and inserted
+    // into contexts where the symbol table chain is broken.
     if (!callee) {
-      // Callee not found - skip (may be external, in different context, or during DSE)
-      LLVM_DEBUG(llvm::dbgs() << "Warning: Cannot find callee for call op: " 
-                              << op << " (skipping sub-function processing)\n";);
-      return;
+      auto calleeName = op.getCallee();
+      if (auto module = op->getParentOfType<ModuleOp>()) {
+        callee = module.lookupSymbol(calleeName);
+        if (!callee) {
+          llvm::errs() << "Warning: Cannot find callee for call op: " 
+                      << op << " (skipping sub-function processing)\n";
+          signalPassFailure();
+        }
+      }
     }
-    
+
     auto subFunc = dyn_cast<func::FuncOp>(callee);
-    if (!subFunc) {
-      // Callee is not a FuncOp - skip
-      LLVM_DEBUG(llvm::dbgs() << "Warning: Callee is not a FuncOp: " 
-                              << *callee << "\n";);
-      return;
-    }
+    assert(subFunc && "callable is not a function operation");
 
     // Apply array partition to the sub-function.
     applyAutoArrayPartition(subFunc, threshold);
@@ -514,7 +503,6 @@ bool scalehls::applyAutoArrayPartition(func::FuncOp func, unsigned threshold) {
   func.setType(builder.getFunctionType(inputTypes, resultTypes));
 
   // Update the types of all sub-functions.
-  // Note: updateSubFuncs will check if the function is in a module context internally.
   updateSubFuncs(func, builder);
   return true;
 }

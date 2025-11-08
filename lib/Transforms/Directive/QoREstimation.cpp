@@ -567,27 +567,24 @@ bool ScaleHLSEstimator::visitOp(scf::IfOp op, int64_t begin) {
 
 bool ScaleHLSEstimator::visitOp(func::CallOp op, int64_t begin) {
   auto callee = SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr());
+  
+  // If nearest symbol lookup failed, try module-level lookup as fallback.
+  // This can happen during DSE when functions/loops are cloned and inserted
+  // into contexts where the symbol table chain is broken.
   if (!callee) {
-    // Callee not found - this can happen during DSE when functions are cloned
-    // outside a module context. Use a conservative estimate (minimal timing).
-    LLVM_DEBUG(llvm::dbgs() << "Warning: Cannot find callee for call op: " 
-                            << op << " (using conservative estimate)\n";);
-    // Set a minimal timing estimate (1 cycle) to allow estimation to continue
-    setTiming(op, begin, begin + 1, 1, 1);
-    // Use minimal resource estimate
-    setResource(op, ResourceAttr::get(op.getContext(), 0, 0, 0));
-    return true;
+    auto calleeName = op.getCallee();
+    if (auto module = op->getParentOfType<ModuleOp>()) {
+      callee = module.lookupSymbol(calleeName);
+      if (!callee) {
+        llvm::errs() << "Warning: Cannot find callee for call op: " 
+                     << op << " (skipping sub-function processing)\n";
+        signalPassFailure();
+      }
+    }
   }
   
   auto subFunc = dyn_cast<func::FuncOp>(callee);
-  if (!subFunc) {
-    // Callee is not a FuncOp - use conservative estimate
-    LLVM_DEBUG(llvm::dbgs() << "Warning: Callee is not a FuncOp: " 
-                            << *callee << " (using conservative estimate)\n";);
-    setTiming(op, begin, begin + 1, 1, 1);
-    setResource(op, ResourceAttr::get(op.getContext(), 0, 0, 0));
-    return true;
-  }
+  assert(subFunc && "callable is not a function operation");
 
   ScaleHLSEstimator estimator(latencyMap, dspUsageMap, depAnalysis);
   estimator.estimateFunc(subFunc);
