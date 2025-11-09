@@ -154,6 +154,61 @@ public:
   SmallVector<AffineForOp, 4> targetLoops;
 };
 
+struct HierFuncDesignPoint {
+  explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum)
+      : latency(latency), dspNum(dspNum) {}
+
+  explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum,
+                                FuncDesignPoint point)
+      : latency(latency), dspNum(dspNum) {
+    funcDesignPoint = point;
+  }
+
+  explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum,
+                                FuncDesignPoint point,
+                                SmallVector<HierFuncDesignPoint, 16> &points)
+      : latency(latency), dspNum(dspNum) {
+    funcDesignPoint = point;
+    subHierFuncDesignPoints = points;
+  }
+
+  int64_t latency;
+  int64_t dspNum;
+
+  FuncDesignPoint funcDesignPoint;
+
+  SmallVector<HierFuncDesignPoint, 16> subHierFuncDesignPoints;
+};
+
+class HierFuncDesignSpace {
+public:
+  explicit HierFuncDesignSpace(func::FuncOp func,
+                               FuncDesignSpace &funcDesignSpace,
+                               SmallVector<HierFuncDesignSpace, 16> &subHierFuncDesignSpaces,
+                               ScaleHLSEstimator &estimator, unsigned maxDspNum)
+      : func(func), funcDesignSpace(funcDesignSpace), 
+        subHierFuncDesignSpaces(subHierFuncDesignSpaces), 
+        estimator(estimator), maxDspNum(maxDspNum) {}
+
+  void combFuncDesignSpaces();
+  func::FuncOp getSubFunc(func::FuncOp func, func::FuncOp subFunc);
+  bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint);
+
+  void dumpHierFuncDesignSpace(StringRef csvFilePath);
+  bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath);
+
+  SmallVector<HierFuncDesignPoint, 16> paretoPoints;
+
+  func::FuncOp func;
+  FuncDesignSpace &funcDesignSpace;
+  SmallVector<HierFuncDesignSpace, 16> &subHierFuncDesignSpaces;
+  ScaleHLSEstimator &estimator;
+  unsigned maxDspNum;
+
+  //SmallVector<AffineForOp, 4> targetLoops;
+};
+
+
 //===----------------------------------------------------------------------===//
 // ScaleHLSExplorer Class Declaration
 //===----------------------------------------------------------------------===//
@@ -174,8 +229,11 @@ public:
   bool evaluateFuncPipeline(func::FuncOp func);
   bool simplifyLoopNests(func::FuncOp func);
   bool optimizeLoopBands(func::FuncOp func, bool directiveOnly);
-  bool exploreDesignSpace(func::FuncOp func, bool directiveOnly,
+  FuncDesignSpace exploreDesignSpace(func::FuncOp func, bool directiveOnly,
                           StringRef outputRootPath, StringRef csvRootPath);
+
+  HierFuncDesignSpace exploreHierDesignSpace(func::FuncOp func, bool directiveOnly,
+                              StringRef outputRootPath, StringRef csvRootPath);
 
   void applyDesignSpaceExplore(func::FuncOp func, bool directiveOnly,
                                StringRef outputRootPath, StringRef csvRootPath);
