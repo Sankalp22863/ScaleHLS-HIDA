@@ -489,6 +489,16 @@ void FuncDesignSpace::combLoopDesignSpaces() {
 
     paretoPoints.push_back(funcPoint);
   }
+  // If no loop design points are found, create a default function design point.
+  if (paretoPoints.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "No loop design points found, creating a default function design point.\n";);
+    estimator.estimateFunc(func);
+    auto latency = getTiming(func).getLatency();
+    auto dspNum = getResource(func).getDsp();
+    auto funcPoint = FuncDesignPoint(latency, dspNum);
+    paretoPoints.push_back(funcPoint);
+  }
+
 
   updateParetoPoints(paretoPoints, maxDspNum);
   LLVM_DEBUG(llvm::dbgs() << "Iteration 0 pareto points number: "
@@ -595,7 +605,8 @@ bool FuncDesignSpace::exportParetoDesigns(unsigned outputNum,
 //===----------------------------------------------------------------------===//
 
 func::FuncOp HierFuncDesignSpace::getSubFunc(func::FuncOp func, StringRef subFuncName) {
-  auto subFuncActual = SymbolTable::lookupNearestSymbolFrom(func, subFuncName);
+  auto subFuncNameAttr = StringAttr::get(func.getContext(), subFuncName);
+  auto subFuncActual = SymbolTable::lookupNearestSymbolFrom(func, subFuncNameAttr);
   if (!subFuncActual) {
     llvm::errs() << "[DSE] ERROR: Cannot find sub function '"
                  << subFuncName << "' in function '"
@@ -697,7 +708,6 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
   }
   os << "tf_cycle,tf_dsp,";
   for (unsigned h = 0; h < subHierFuncDesignSpaces.size(); ++h) {
-    auto &subHierFuncSpace = subHierFuncDesignSpaces[h];
     os << "sf" << h << "cycle" << ",";
     os << "sf" << h << "dsp" << ",";
   }
@@ -719,7 +729,6 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
     os << funcPoint.latency << "," << funcPoint.dspNum << ",";
 
     for (unsigned i = 0; i < subHierFuncDesignSpaces.size(); ++i) {
-      auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
       auto &subHierFuncPoint = hierFuncPoint.subHierFuncDesignPoints[i];
       os << subHierFuncPoint.latency << "," << subHierFuncPoint.dspNum << ",";
     }
@@ -731,18 +740,16 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
                           << csvFilePath << "\".\n\n");
 }
 
-bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignSpace hierFuncSpace, HierFuncDesignPoint hierFuncPoint) {
+bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint) {
   LLVM_DEBUG(llvm::dbgs() << "Apply optimization strategies to the current function '"
                           << currentFunc.getName() << "'...\n";);
   // STEP 1: Apply optimization strategies to the current function
   auto funcPoint = hierFuncPoint.funcDesignPoint;
-  auto funcSpace = hierFuncSpace.funcDesignSpace;
-  auto loopDesignSpaces = funcSpace.loopDesignSpaces;
   std::vector<FactorList> tileLists;
   SmallVector<unsigned, 4> targetIIs;
-  for (unsigned i = 0, e = loopDesignSpaces.size(); i < e; ++i) {
+  for (unsigned i = 0, e = funcDesignSpace.loopDesignSpaces.size(); i < e; ++i) {
     auto &loopPoint = funcPoint.loopDesignPoints[i];
-    auto &loopSpace = loopDesignSpaces[i];
+    auto &loopSpace = funcDesignSpace.loopDesignSpaces[i];
     auto tileList = loopSpace.getTileList(loopPoint.tileConfig);
     auto targetII = loopPoint.targetII;
     tileLists.push_back(tileList);
@@ -759,8 +766,8 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
   for (unsigned i = 0; i < hierFuncPoint.subHierFuncDesignPoints.size(); ++i) {
     auto &subHierFuncPoint = hierFuncPoint.subHierFuncDesignPoints[i];
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
-    auto &subFunc = getSubFunc(currentFunc, subHierFuncSpace.func.getName());
-    if (!applyOptStrategyRecursive(subFunc, subHierFuncSpace, subHierFuncPoint))
+    auto subFunc = getSubFunc(currentFunc, subHierFuncSpace.func.getName());
+    if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint))
       return false;
   }
   LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the sub functions of '"
@@ -986,19 +993,17 @@ HierFuncDesignSpace ScaleHLSExplorer::exploreHierDesignSpace(func::FuncOp func, 
                              "design space exploration...\n";);
 
   // STEP 1: Create current function design space.
-  FuncDesignSpace funcSpace;
-  if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath, funcSpace))
-    return false;
-  assert(funcSpace && "funcSpace is null");
+  FuncDesignSpace funcSpace = exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath);
 
   // STEP 2: Recursively create hierarchical function design spaces for sub functions.
-  SmallVector<HierFuncDesignSpace, 16> subHierFuncDesignSpaces;
-  for (auto &subFunc : func.getOps<func::FuncOp>()) {
+  std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces;
+  for (auto subFunc : func.getOps<func::FuncOp>()) {
+    LLVM_DEBUG(llvm::dbgs() << "Exploring hierarchical function design space for sub function '"
+                            << subFunc.getName() << "'...\n";);
     auto subHierFuncSpace = exploreHierDesignSpace(subFunc, directiveOnly, outputRootPath, csvRootPath);
-    assert(subHierFuncSpace && "subHierFuncSpace is null");
     subHierFuncDesignSpaces.push_back(subHierFuncSpace);
   }
-
+  LLVM_DEBUG(llvm::dbgs() << "Hierarchical function design spaces for sub functions created.\n";);
   // STEP 3: Combine function design spaces into a hierarchical function design space, including the current function design space.
   HierFuncDesignSpace hierFuncSpace = HierFuncDesignSpace(func, funcSpace, subHierFuncDesignSpaces, estimator, maxDspNum);
   hierFuncSpace.combFuncDesignSpaces();
@@ -1007,10 +1012,9 @@ HierFuncDesignSpace ScaleHLSExplorer::exploreHierDesignSpace(func::FuncOp func, 
 }
 
 /// DSE Stage3: Explore the function design space through dynamic programming.
-bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
+FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
                                           StringRef outputRootPath,
-                                          StringRef csvRootPath,
-                                          FuncDesignSpace &funcSpaceOut) {
+                                          StringRef csvRootPath) {
   LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: Conduct top function design "
                              "space exploration...\n";);
 
@@ -1043,12 +1047,6 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
   }
 
   // Combine all loop design spaces into a function design space.
-  if (loopSpaces.empty()) {
-    llvm::errs() << "[DSE] WARNING: No loop bands to explore for function '" 
-                 << func.getName() << "'. Skipping DSE.\n";
-    return true; // Return success even if no loops found
-  }
-
   tmpFunc = func.clone();
   auto funcSpace = FuncDesignSpace(tmpFunc, loopSpaces, estimator, maxDspNum);
   funcSpace.combLoopDesignSpaces();
@@ -1083,13 +1081,12 @@ bool ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
       }
 
       if (!applyOptStrategy(func, tileLists, targetIIs))
-        return false;
+        assert(false && "Failed to apply optimization strategies to the current function");
       break;
     }
   }
-  funcSpaceOut = funcSpace;
 
-  return emitQoRDebugInfo(func, "\nFinish Stage3.");
+  return funcSpace;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1115,8 +1112,7 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
   // Explore the design space through a multiple level approach.
   //if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath))
   //  return;
-  if (!exploreHierDesignSpace(func, directiveOnly, outputRootPath, csvRootPath))
-    return;
+  exploreHierDesignSpace(func, directiveOnly, outputRootPath, csvRootPath);
 }
 
 namespace {

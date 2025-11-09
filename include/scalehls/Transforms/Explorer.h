@@ -155,20 +155,14 @@ public:
 };
 
 struct HierFuncDesignPoint {
-  explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum)
-      : latency(latency), dspNum(dspNum) {}
-
   explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum,
                                 FuncDesignPoint point)
-      : latency(latency), dspNum(dspNum) {
-    funcDesignPoint = point;
-  }
+      : latency(latency), dspNum(dspNum), funcDesignPoint(point) {}
 
   explicit HierFuncDesignPoint(int64_t latency, int64_t dspNum,
                                 FuncDesignPoint point,
-                                SmallVector<HierFuncDesignPoint, 16> &points)
-      : latency(latency), dspNum(dspNum) {
-    funcDesignPoint = point;
+                                std::vector<HierFuncDesignPoint> &points)
+      : latency(latency), dspNum(dspNum), funcDesignPoint(point) {
     subHierFuncDesignPoints = points;
   }
 
@@ -177,21 +171,21 @@ struct HierFuncDesignPoint {
 
   FuncDesignPoint funcDesignPoint;
 
-  SmallVector<HierFuncDesignPoint, 16> subHierFuncDesignPoints;
+  std::vector<HierFuncDesignPoint> subHierFuncDesignPoints;
 };
 
 class HierFuncDesignSpace {
 public:
   explicit HierFuncDesignSpace(func::FuncOp func,
                                FuncDesignSpace &funcDesignSpace,
-                               SmallVector<HierFuncDesignSpace, 16> &subHierFuncDesignSpaces,
+                               std::vector<HierFuncDesignSpace> &subHierFuncDesignSpaces,
                                ScaleHLSEstimator &estimator, unsigned maxDspNum)
       : func(func), funcDesignSpace(funcDesignSpace), 
         subHierFuncDesignSpaces(subHierFuncDesignSpaces), 
         estimator(estimator), maxDspNum(maxDspNum) {}
 
   void combFuncDesignSpaces();
-  func::FuncOp getSubFunc(func::FuncOp func, func::FuncOp subFunc);
+  func::FuncOp getSubFunc(func::FuncOp func, StringRef subFuncName);
   bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint);
 
   void dumpHierFuncDesignSpace(StringRef csvFilePath);
@@ -201,7 +195,7 @@ public:
 
   func::FuncOp func;
   FuncDesignSpace &funcDesignSpace;
-  SmallVector<HierFuncDesignSpace, 16> &subHierFuncDesignSpaces;
+  std::vector<HierFuncDesignSpace> &subHierFuncDesignSpaces;
   ScaleHLSEstimator &estimator;
   unsigned maxDspNum;
 
