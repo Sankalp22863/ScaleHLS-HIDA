@@ -314,6 +314,9 @@ void scalehls::registerHIDAPyTorchDSEPipeline() {
         pm.addPass(scalehls::createArrayPartitionPass());
         pm.addPass(scalehls::createCreateHLSPrimitivePass());
         pm.addPass(mlir::createCanonicalizerPass());
+
+        if (opts.debugPoint == 14)
+          return;
         
         // Step 2: Run DSE (expects Affine dialect)
         pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));

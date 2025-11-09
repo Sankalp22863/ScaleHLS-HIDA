@@ -222,11 +222,11 @@ struct ParallelizeDataflowNode
                  << initialWorklistSize << " nodes in initial worklist...\n";
     while (!worklist.empty()) {
       processedNodes++;
-      if (processedNodes > maxIterations) {
+      /*if (processedNodes > maxIterations) {
         llvm::errs() << "[Phase 11.2] WARNING: Exceeded max iterations (" << maxIterations 
                      << "). Possible infinite loop! Breaking...\n";
         break;
-      }
+      }*/
       if (processedNodes % 10 == 0 || processedNodes == 1) {
         llvm::errs() << "[Phase 11.2] Processing iteration " << processedNodes 
                      << " (worklist size: " << worklist.size() << ", processed: " 
@@ -239,8 +239,10 @@ struct ParallelizeDataflowNode
       // If the correlation list is empty, which means the correlation analysis
       // failed, skip the current node.
       auto corrList = corrAnal.getCorrelations(node);
-      if (corrList.empty())
+      if (corrList.empty()) {
+        LLVM_DEBUG(llvm::dbgs() << "Correlation list is empty for node " << node->getName() << "\n";);
         continue;
+      }
 
       // Get the parallel factor and loop band associated with the current node.
       // Also initialize the unroll factors as one.
@@ -302,10 +304,24 @@ struct ParallelizeDataflowNode
       }
 
       // Distribute factor based on the constraints and record in the map.
+      bool hasExtBufferCorr = !candidatesToRevisit.empty();
       if (failed(getEvenlyDistributedFactors(parallelFactor, factors, band,
                                              corrFactorsList,
-                                             /*powerOf2Constr=*/true)))
-        factors = getDistributedFactors(parallelFactor, band);
+                                             /*powerOf2Constr=*/true))) {
+        // If we have external buffer correlations, we MUST respect them.
+        // The issue: getEvenlyDistributedFactors failed, which means we can't
+        // distribute parallelFactor while satisfying all constraints. 
+        // When this happens with external buffer correlations, we keep the factors
+        // that respect external buffer constraints (factors already contains the
+        // max of all external buffer correlation factors from lines 280-283).
+        // This ensures nodes sharing external buffers will eventually converge
+        // to matching factors, even if we can't perfectly distribute parallelFactor.
+        if (!hasExtBufferCorr) {
+          // Only use getDistributedFactors if there are no external buffer correlations
+          factors = getDistributedFactors(parallelFactor, band);
+        }
+        // Otherwise, keep factors as-is (they already respect external buffer constraints)
+      }
       nodeUnrollFactorsMap[node] = factors;
 
       // If the final factors are not equal to the factors of any external

@@ -20,6 +20,46 @@
 using namespace mlir;
 using namespace scalehls;
 
+/// Helper function to clone a function by cloning its module first.
+/// This preserves the symbol table hierarchy, allowing symbol resolution to work
+/// correctly even for cloned functions that call other functions.
+/// 
+/// Returns the cloned function. The cloned module is kept alive because the
+/// function is part of the module's region, so as long as we hold a reference
+/// to the function, the module stays alive.
+static func::FuncOp cloneFunctionWithModule(func::FuncOp func) {
+  // Get the module containing the function
+  ModuleOp module = func->getParentOfType<ModuleOp>();
+  if (!module) {
+    // If function is not in a module, fall back to simple clone
+    // (this shouldn't happen in normal usage, but handle it gracefully)
+    LLVM_DEBUG(llvm::dbgs() << "Warning: Function '" << func.getName() 
+                            << "' is not in a module, using simple clone\n";);
+    return func.clone();
+  }
+  
+  // Clone the entire module to preserve symbol table hierarchy.
+  // This ensures that all function calls within the cloned function can
+  // resolve their callees using the symbol table, since the cloned function
+  // and all its callees are in the same cloned module.
+  auto clonedModule = cast<ModuleOp>(module->clone());
+  
+  // Find and return the function with the same name in the cloned module
+  auto funcName = func.getName();
+  auto clonedFunc = clonedModule.lookupSymbol<func::FuncOp>(funcName);
+  if (!clonedFunc) {
+    llvm::errs() << "ERROR: Could not find function '" << funcName 
+                 << "' in cloned module. This should not happen.\n";
+    assert(false && "Function not found in cloned module");
+  }
+  
+  // Note: The clonedModule will stay alive as long as clonedFunc is alive
+  // because clonedFunc is part of clonedModule's region. We don't need to
+  // explicitly store the module reference.
+  
+  return clonedFunc;
+}
+
 /// Update paretoPoints to remove design points that are not pareto frontiers.
 /// Optionally filter by resource constraints.
 template <typename DesignPointType>
@@ -572,14 +612,14 @@ bool FuncDesignSpace::exportParetoDesigns(unsigned outputNum,
         targetIIs.push_back(targetII);
       }
 
-      // Clone a new function and apply optimization.
-      auto tmpFunc = func.clone();
+      // Clone a new function (with its module) and apply optimization.
+      auto tmpFunc = cloneFunctionWithModule(func);
       if (!applyOptStrategy(tmpFunc, tileLists, targetIIs))
         return false;
       estimator.estimateFunc(tmpFunc);
 
       // Parse a new output file.
-      auto outputFilePath = outputRootPath.str() + func.getName().str() +
+      auto outputFilePath = outputRootPath.str() + "/function_output/" + func.getName().str() +
                             "_pareto_" + std::to_string(sampleIndex) + ".mlir";
 
       std::string errorMessage;
@@ -785,7 +825,8 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
   for (auto &hierFuncPoint : paretoPoints) {
     // Only export sampled points.
     if (sampleIndex % sampleStep == 0) {
-      auto tmpFunc = func.clone();
+      // Clone function with its module to preserve symbol table
+      auto tmpFunc = cloneFunctionWithModule(func);
 
       if (!applyOptStrategyRecursive(tmpFunc, hierFuncPoint))
         return false;
@@ -793,7 +834,7 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
       estimator.estimateFunc(tmpFunc);
 
       // Parse a new output file.
-      auto outputFilePath = outputRootPath.str() + func.getName().str() +
+      auto outputFilePath = outputRootPath.str() + "/function_hier_output/" + func.getName().str() +
                             "_pareto_" + std::to_string(sampleIndex) + ".mlir";
 
       std::string errorMessage;
@@ -921,9 +962,11 @@ bool ScaleHLSExplorer::simplifyLoopNests(func::FuncOp func) {
     for (auto pair : candidateLoops) {
       auto candidate = pair.second;
 
-      // Create a temporary function.
+      // Create a temporary function (with its module to preserve symbol table).
+      // Note: We need to set the flag on the original function first, then clone,
+      // because the cloned function will be used for optimization.
       candidate->setAttr("opt_flag", BoolAttr::get(func.getContext(), true));
-      auto tmpFunc = func.clone();
+      auto tmpFunc = cloneFunctionWithModule(func);
 
       // Find the candidate loop in the temporary function and apply fully loop
       // unrolling to it.
@@ -990,20 +1033,50 @@ HierFuncDesignSpace ScaleHLSExplorer::exploreHierDesignSpace(func::FuncOp func, 
                                               StringRef outputRootPath,
                                               StringRef csvRootPath) {
   LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: Conduct hierarchical function "
-                             "design space exploration...\n";);
+                             "design space exploration for function '"
+                             << func.getName() << "'...\n";);
 
   // STEP 1: Create current function design space.
   FuncDesignSpace funcSpace = exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath);
 
   // STEP 2: Recursively create hierarchical function design spaces for sub functions.
+  // Find all call operations and resolve their callee functions.
   std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces;
-  for (auto subFunc : func.getOps<func::FuncOp>()) {
+  unsigned subFuncIndex = 0;
+  
+  for (auto callOp : func.getOps<func::CallOp>()) {
+    // Resolve the callee function from the call operation
+    auto callee = SymbolTable::lookupNearestSymbolFrom(callOp, callOp.getCalleeAttr());
+    
+    // If nearest symbol lookup failed, try module-level lookup as fallback
+    if (!callee) {
+      auto calleeName = callOp.getCallee();
+      if (auto module = callOp->getParentOfType<ModuleOp>()) {
+        callee = module.lookupSymbol(calleeName);
+      }
+      if (!callee) {
+        LLVM_DEBUG(llvm::dbgs() << "Warning: Cannot find callee for call op: " 
+                                << callOp << " (skipping)\n";);
+        continue;
+      }
+    }
+    
+    auto subFunc = dyn_cast<func::FuncOp>(callee);
+    if (!subFunc) {
+      LLVM_DEBUG(llvm::dbgs() << "Warning: Callee is not a function operation for call: " 
+                              << callOp << " (skipping)\n";);
+      continue;
+    }
+    
     LLVM_DEBUG(llvm::dbgs() << "Exploring hierarchical function design space for sub function '"
                             << subFunc.getName() << "'...\n";);
     auto subHierFuncSpace = exploreHierDesignSpace(subFunc, directiveOnly, outputRootPath, csvRootPath);
     subHierFuncDesignSpaces.push_back(subHierFuncSpace);
+    ++subFuncIndex;
   }
   LLVM_DEBUG(llvm::dbgs() << "Hierarchical function design spaces for sub functions created.\n";);
+  LLVM_DEBUG(llvm::dbgs() << "Total " << subFuncIndex << " sub functions explored for function '"
+                           << func.getName() << "'.\n\n";);
   // STEP 3: Combine function design spaces into a hierarchical function design space, including the current function design space.
   HierFuncDesignSpace hierFuncSpace = HierFuncDesignSpace(func, funcSpace, subHierFuncDesignSpaces, estimator, maxDspNum);
   hierFuncSpace.combFuncDesignSpaces();
@@ -1018,7 +1091,8 @@ FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool dir
   LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: Conduct top function design "
                              "space exploration...\n";);
 
-  auto tmpFunc = func.clone();
+  // Clone the function by cloning its module first to preserve symbol table
+  auto tmpFunc = cloneFunctionWithModule(func);
   AffineLoopBands targetBands;
   getLoopBands(tmpFunc.front(), targetBands);
   unsigned targetNum = targetBands.size();
@@ -1041,19 +1115,20 @@ FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool dir
     loopSpaces.push_back(space);
 
     // Dump design points to csv file for each loop band.
-    auto loopCsvFilePath = csvRootPath.str() + func.getName().str() + "_loop_" +
+    auto loopCsvFilePath = csvRootPath.str() + "/loop_output/" + func.getName().str() + "_loop_" +
                            std::to_string(i) + "_space.csv";
     space.dumpLoopDesignSpace(loopCsvFilePath);
   }
 
   // Combine all loop design spaces into a function design space.
-  tmpFunc = func.clone();
+  // Clone the function again (with its module) for the function design space
+  tmpFunc = cloneFunctionWithModule(func);
   auto funcSpace = FuncDesignSpace(tmpFunc, loopSpaces, estimator, maxDspNum);
   funcSpace.combLoopDesignSpaces();
 
   // Dump design points to csv file for each function.
   auto funcCsvFilePath =
-      csvRootPath.str() + func.getName().str() + "_space.csv";
+      csvRootPath.str() + "/loop_output/" + func.getName().str() + "_space.csv";
   funcSpace.dumpFuncDesignSpace(funcCsvFilePath);
 
   // Export sampled pareto points MLIR source.
@@ -1100,6 +1175,20 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
                                                StringRef csvRootPath) {
   emitQoRDebugInfo(func, "Start multiple level DSE.");
 
+  // Create output directories if they don't exist
+  std::string outputDir = outputRootPath.str() + "/function_output";
+  std::string csvDir = csvRootPath.str() + "/loop_output";
+  std::string hierOutputDir = outputRootPath.str() + "/function_hier_output";
+  if (!llvm::sys::fs::create_directories(outputDir)) {
+    llvm::errs() << "Failed to create function output directory: " << outputDir << "\n";
+    return;
+  }
+  if (!llvm::sys::fs::create_directories(csvDir)) {
+    llvm::errs() << "Failed to create loop CSV directory: " << csvDir << "\n";
+  }
+  if (!llvm::sys::fs::create_directories(hierOutputDir)) {
+    llvm::errs() << "Failed to create hierarchical function output directory: " << hierOutputDir << "\n";
+  }
   // Simplify loop nests by unrolling.
   if (!simplifyLoopNests(func))
     return;
