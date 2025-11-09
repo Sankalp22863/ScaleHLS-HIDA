@@ -174,6 +174,9 @@ struct HierFuncDesignPoint {
   std::vector<HierFuncDesignPoint> subHierFuncDesignPoints;
 };
 
+// Forward declaration to resolve circular dependency
+class ScaleHLSExplorer;
+
 class HierFuncDesignSpace {
 public:
   explicit HierFuncDesignSpace(func::FuncOp func,
@@ -184,7 +187,7 @@ public:
         subHierFuncDesignSpaces(subHierFuncDesignSpaces), 
         estimator(estimator), maxDspNum(maxDspNum) {}
 
-  void combFuncDesignSpaces();
+  void combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool directiveOnly, StringRef outputRootPath, StringRef csvRootPath);
   func::FuncOp getSubFunc(func::FuncOp func, StringRef subFuncName);
   bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint);
 
