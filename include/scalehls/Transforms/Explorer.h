@@ -9,6 +9,8 @@
 
 #include "scalehls/Transforms/Estimator.h"
 #include <vector>
+#include <optional>
+#include <cassert>
 
 namespace mlir {
 namespace scalehls {
@@ -180,6 +182,7 @@ class ScaleHLSExplorer;
 
 class HierFuncDesignSpace {
 public:
+  // Constructor with funcDesignSpace
   explicit HierFuncDesignSpace(func::FuncOp func,
                                FuncDesignSpace funcDesignSpace,
                                std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces,
@@ -187,6 +190,38 @@ public:
       : func(func), funcDesignSpace(std::move(funcDesignSpace)), 
         subHierFuncDesignSpaces(std::move(subHierFuncDesignSpaces)), 
         estimator(estimator), maxDspNum(maxDspNum), funcName(func.getName().str()) {}
+
+  // Constructor without funcDesignSpace - can be set later using setFuncDesignSpace()
+  explicit HierFuncDesignSpace(func::FuncOp func,
+                               std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces,
+                               ScaleHLSEstimator &estimator, unsigned maxDspNum)
+      : func(func), 
+        subHierFuncDesignSpaces(std::move(subHierFuncDesignSpaces)), 
+        estimator(estimator), maxDspNum(maxDspNum), funcName(func.getName().str()) {}
+
+  // Setter to assign funcDesignSpace after construction
+  void setFuncDesignSpace(FuncDesignSpace funcDesignSpace) {
+    if (this->funcDesignSpace.has_value()) {
+      this->funcDesignSpace.reset();
+    }
+    this->funcDesignSpace.emplace(std::move(funcDesignSpace));
+  }
+
+  // Getter for funcDesignSpace (returns reference, asserts it's set)
+  FuncDesignSpace &getFuncDesignSpace() {
+    assert(funcDesignSpace.has_value() && "funcDesignSpace must be set before use");
+    return *funcDesignSpace;
+  }
+
+  const FuncDesignSpace &getFuncDesignSpace() const {
+    assert(funcDesignSpace.has_value() && "funcDesignSpace must be set before use");
+    return *funcDesignSpace;
+  }
+
+  // Check if funcDesignSpace is set
+  bool hasFuncDesignSpace() const {
+    return funcDesignSpace.has_value();
+  }
 
   void combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool directiveOnly, StringRef outputRootPath, StringRef csvRootPath);
   func::FuncOp getSubFunc(func::FuncOp func, StringRef subFuncName);
@@ -199,7 +234,7 @@ public:
   std::vector<HierFuncDesignPoint> paretoPoints;
 
   func::FuncOp func;
-  FuncDesignSpace funcDesignSpace;  // Store by value to avoid dangling references
+  std::optional<FuncDesignSpace> funcDesignSpace;  // Optional to allow deferred initialization
   std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces;  // Store by value to avoid dangling references
   ScaleHLSEstimator &estimator;
   unsigned maxDspNum;
