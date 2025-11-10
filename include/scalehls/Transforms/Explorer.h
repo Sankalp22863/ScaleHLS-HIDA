@@ -191,7 +191,7 @@ public:
   void combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool directiveOnly, StringRef outputRootPath, StringRef csvRootPath);
   func::FuncOp getSubFunc(func::FuncOp func, StringRef subFuncName);
   func::FuncOp getSubFuncFromModule(ModuleOp module, StringRef subFuncName);
-  bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule);
+  bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule, unsigned sampleIndex);
 
   void dumpHierFuncDesignSpace(StringRef csvFilePath);
   bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath, ModuleOp topModule);

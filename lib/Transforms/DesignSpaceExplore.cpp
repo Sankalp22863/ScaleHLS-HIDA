@@ -764,6 +764,17 @@ func::CallOp getSubFuncCallOp(func::FuncOp func, StringRef subFuncName) {
   return foundCallOp;
 }
 
+void setTimingAndResourceSubFunc(func::FuncOp func, func::FuncOp subFunc, int64_t latency, int64_t dspNum) {
+  LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << subFunc.getName() << " of function " << func.getName() << " with latency " << latency << " and dsp num " << dspNum << "\n";);
+  setTiming(subFunc, -1, -1, latency, -1);
+  setResource(subFunc, -1, dspNum, -1);
+  auto callOpSubFunc = getSubFuncCallOp(func, subFunc.getName());
+
+  setTiming(callOpSubFunc, -1, -1, latency, -1);
+  setResource(callOpSubFunc, -1, dspNum, -1);
+  callOpSubFunc->setAttr("no_touch", BoolAttr::get(func.getContext(), true));
+}
+
 func::FuncOp HierFuncDesignSpace::getSubFunc(func::FuncOp func, StringRef subFuncName) {
   auto subFuncNameAttr = StringAttr::get(func.getContext(), subFuncName);
   auto subFuncActual = SymbolTable::lookupNearestSymbolFrom(func, subFuncNameAttr);
@@ -815,41 +826,21 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
 
   for (auto &subHierFuncPoint : subHierFuncDesignSpaces[0].paretoPoints) {
     auto subFunc = getSubFunc(func, subHierFuncDesignSpaces[0].func.getName());
-    setTiming(subFunc, -1, -1, subHierFuncPoint.latency, -1);
-    setResource(subFunc, -1, subHierFuncPoint.dspNum, -1);
+    setTimingAndResourceSubFunc(func, subFunc, subHierFuncPoint.latency, subHierFuncPoint.dspNum);
 
 
     for (unsigned ii = 1; ii < subHierFuncDesignSpaces.size(); ++ii) {
       auto &otherSubHierFuncSpace = subHierFuncDesignSpaces[ii];
       auto otherSubFunc = otherSubHierFuncSpace.func;
       auto otherSubFuncPoint = otherSubHierFuncSpace.paretoPoints[otherSubHierFuncSpace.paretoPoints.size() - 1];
-      LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << otherSubFunc.getName() << " of function " << func.getName() << " with latency " << otherSubFuncPoint.latency << " and dsp num " << otherSubFuncPoint.dspNum << "\n";);
-
-      auto callOpSubFunc = getSubFuncCallOp(func, otherSubFunc.getName());
-      // Annotate the call op of the sub function.
-      setTiming(callOpSubFunc, -1, -1, otherSubFuncPoint.latency, -1);
-      setResource(callOpSubFunc, -1, otherSubFuncPoint.dspNum, -1);
-      // Mark the call op as no_touch to prevent initEstimator from clearing its attributes
-      callOpSubFunc->setAttr("no_touch", BoolAttr::get(func.getContext(), true));
-      // choose the minimum resource point for the other sub functions.
-      setTiming(otherSubFunc, -1, -1, otherSubFuncPoint.latency, -1);
-      setResource(otherSubFunc, -1, otherSubFuncPoint.dspNum, -1);
+      setTimingAndResourceSubFunc(func, otherSubFunc, otherSubFuncPoint.latency, otherSubFuncPoint.dspNum);
     }
     
     LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the first hierarchical function design space. There are " << subHierFuncDesignSpaces[0].paretoPoints.size() << " design points.\n";);
     // Traverse all design points of the first hierarchical function design space.
     for (auto &subHierFuncPoint : subHierFuncDesignSpaces[0].paretoPoints) {
-      LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << subHierFuncDesignSpaces[0].func.getName() << " of function " << func.getName() << " with latency " << subHierFuncPoint.latency << " and dsp num " << subHierFuncPoint.dspNum << "\n";);
       auto subFunc = getSubFunc(func, subHierFuncDesignSpaces[0].func.getName());
-      auto callOpSubFunc = getSubFuncCallOp(func, subFunc.getName());
-      // Annotate the call op of the sub function.
-      setTiming(callOpSubFunc, -1, -1, subHierFuncPoint.latency, -1);
-      setResource(callOpSubFunc, -1, subHierFuncPoint.dspNum, -1);
-      // Mark the call op as no_touch to prevent initEstimator from clearing its attributes
-      callOpSubFunc->setAttr("no_touch", BoolAttr::get(func.getContext(), true));
-      // Annotate the sub function.
-      setTiming(subFunc, -1, -1, subHierFuncPoint.latency, -1);
-      setResource(subFunc, -1, subHierFuncPoint.dspNum, -1);
+      setTimingAndResourceSubFunc(func, subFunc, subHierFuncPoint.latency, subHierFuncPoint.dspNum);
       
       std::vector<HierFuncDesignPoint> subHierFuncPoints;
       // form the sub hierarchical function design points. It includes the given point of the first function and the minimum resource point of the other functions.
@@ -887,16 +878,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
           auto &otherSubFuncPoint = hierFuncPoint.subHierFuncDesignPoints[ii];
           auto &otherSubHierFuncSpace = subHierFuncDesignSpaces[ii];
           auto otherSubFunc = otherSubHierFuncSpace.func;
-          auto callOpOtherSubFunc = getSubFuncCallOp(func, otherSubFunc.getName());
-          // Annotate the call op of the sub function.
-          setTiming(callOpOtherSubFunc, -1, -1, otherSubFuncPoint.latency, -1);
-          setResource(callOpOtherSubFunc, -1, otherSubFuncPoint.dspNum, -1);
-          // Mark the call op as no_touch to prevent initEstimator from clearing its attributes
-          callOpOtherSubFunc->setAttr("no_touch", BoolAttr::get(func.getContext(), true));
-          // Annotate the sub function.
-          setTiming(otherSubFunc, -1, -1, otherSubFuncPoint.latency, -1);
-          setResource(otherSubFunc, -1, otherSubFuncPoint.dspNum, -1);
-          LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << otherSubFunc.getName() << " of function " << func.getName() << " with latency " << otherSubFuncPoint.latency << " and dsp num " << otherSubFuncPoint.dspNum << ". This should be the minimum resource point.\n";);
+          setTimingAndResourceSubFunc(func, otherSubFunc, otherSubFuncPoint.latency, otherSubFuncPoint.dspNum);
         }
       }
 
@@ -904,15 +886,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
       for (auto &subHierFuncPoint : subHierFuncSpace.paretoPoints) {
         // Annotate the next hierarchical function.
         auto subFunc = getSubFunc(func, subHierFuncSpace.func.getName());
-        auto callOpSubFunc = getSubFuncCallOp(func, subFunc.getName());
-        // Annotate the call op of the sub function.
-        setTiming(callOpSubFunc, -1, -1, subHierFuncPoint.latency, -1);
-        setResource(callOpSubFunc, -1, subHierFuncPoint.dspNum, -1);
-        callOpSubFunc->setAttr("no_touch", BoolAttr::get(func.getContext(), true));
-        // Annotate the sub function.
-        setTiming(subFunc, -1, -1, subHierFuncPoint.latency, -1);
-        setResource(subFunc, -1, subHierFuncPoint.dspNum, -1);
-        LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << subFunc.getName() << " of function " << func.getName() << " with latency " << subHierFuncPoint.latency << " and dsp num " << subHierFuncPoint.dspNum << "\n";);
+        setTimingAndResourceSubFunc(func, subFunc, subHierFuncPoint.latency, subHierFuncPoint.dspNum);
         if (func.getName() == "forward") {
           dumpFuncMLIR(func, "pre_estimated_func_design_point", false);
         }
@@ -1003,12 +977,15 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
                           << csvFilePath << "\".\n\n");
 }
 
-bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule) {
+bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule, unsigned sampleIndex) {
   LLVM_DEBUG(llvm::dbgs() << "Apply optimization strategies to the current function '"
-                          << currentFunc.getName() << "'...\n";);
+                          << currentFunc.getName() << "' for sample index " << sampleIndex << "...\n";);
   // STEP 1: Apply optimization strategies to the current function
   dumpFuncMLIR(currentFunc, "before_optimized_func", false);
   auto funcPoint = hierFuncPoint.funcDesignPoint;
+  auto dspNum = hierFuncPoint.dspNum;
+  auto latency = hierFuncPoint.latency;
+  LLVM_DEBUG(llvm::dbgs() << "The dsp num of the current function is " << dspNum << " and the latency is " << latency << "\n";);
   std::vector<FactorList> tileLists;
   std::vector<unsigned> targetIIs;
   for (unsigned i = 0, e = funcDesignSpace.loopDesignSpaces.size(); i < e; ++i) {
@@ -1025,7 +1002,11 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
     return false;
   }
   LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the current function '"
-                          << currentFunc.getName() << "'.\n";);
+                          << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
+  estimator.estimateFunc(currentFunc);
+  auto optimizedLatency = getTiming(currentFunc).getLatency();
+  auto optimizedDspNum = getResource(currentFunc).getDsp();
+  LLVM_DEBUG(llvm::dbgs() << "The optimized latency of the current function is " << optimizedLatency << " and the optimized dsp num is " << optimizedDspNum << "\n";);
   dumpFuncMLIR(currentFunc, "optimized_func", false);
   // STEP 2: Apply optimization strategies to the sub functions
   LLVM_DEBUG(llvm::dbgs() << hierFuncPoint.subHierFuncDesignPoints.size() << " sub function design points to apply optimization strategies to\n";);
@@ -1039,11 +1020,11 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
                    << "' in module\n";
       return false;
     }
-    if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint, parentModule))
+    if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint, parentModule, sampleIndex))
       return false;
   }
   LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the sub functions of '"
-                          << currentFunc.getName() << "'.\n";);
+                          << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
   return true;
 }
 
@@ -1063,7 +1044,7 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
       ModuleOp tmpModule = cast<ModuleOp>(clonedOp);
       auto tmpFunc = getSubFuncFromModule(tmpModule, func.getName());
 
-      if (!applyOptStrategyRecursive(tmpFunc, hierFuncPoint, tmpModule))
+      if (!applyOptStrategyRecursive(tmpFunc, hierFuncPoint, tmpModule, sampleIndex))
         return false;
       
       estimator.estimateFunc(tmpFunc);
