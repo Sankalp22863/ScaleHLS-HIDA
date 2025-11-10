@@ -750,9 +750,9 @@ TimingAttr ScaleHLSEstimator::estimateBlock(Block &block, int64_t begin) {
 
     // Estimate the current operation.
     if (isNoTouch(op) && isa<func::CallOp>(op)) { // do not descend into call ops, they should already be estimated
-      LLVM_DEBUG(llvm::errs() << "No touch operation: " << op->getName() << "\n");
-      LLVM_DEBUG(llvm::errs() << "Op begin: " << opBegin << "\n");
-      LLVM_DEBUG(llvm::errs() << "Latency: " << getTiming(op).getLatency() << "\n");
+      //LLVM_DEBUG(llvm::errs() << "No touch operation: " << op->getName() << "\n");
+      //LLVM_DEBUG(llvm::errs() << "Op begin: " << opBegin << "\n");
+      //LLVM_DEBUG(llvm::errs() << "Latency: " << getTiming(op).getLatency() << "\n");
       auto latency = getTiming(op).getLatency();
       opEnd = latency + opBegin;
       setTiming(op, opBegin, opEnd, latency, latency);
