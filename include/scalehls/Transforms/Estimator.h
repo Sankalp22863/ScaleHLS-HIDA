@@ -81,6 +81,8 @@ public:
   HANDLE(arith::MulFOp, "fmul");
   HANDLE(arith::DivFOp, "fdiv");
   HANDLE(arith::CmpFOp, "fcmp");
+  HANDLE(arith::MaxFOp, "fcmp");  // Max/min operations are comparison-like, use fcmp
+  HANDLE(arith::MinFOp, "fcmp");
   HANDLE(math::ExpOp, "fexp");
 #undef HANDLE
 

@@ -8,6 +8,7 @@
 #define SCALEHLS_TRANSFORMS_EXPLORER_H
 
 #include "scalehls/Transforms/Estimator.h"
+#include <vector>
 
 namespace mlir {
 namespace scalehls {
@@ -68,8 +69,8 @@ public:
   /// Stores current pareto frontiers and all evaluated design points. The
   /// "allPoints" is mainly used for design space dumping, which is actually not
   /// used in the DSE procedure.
-  SmallVector<LoopDesignPoint, 16> paretoPoints;
-  SmallVector<LoopDesignPoint, 16> allPoints;
+  std::vector<LoopDesignPoint> paretoPoints;
+  std::vector<LoopDesignPoint> allPoints;
 
   /// Associated function, loop band, and estimator.
   func::FuncOp func;
@@ -78,12 +79,12 @@ public:
   unsigned maxDspNum;
 
   /// Records the trip count of each loop level.
-  SmallVector<unsigned, 8> tripCountList;
+  std::vector<unsigned> tripCountList;
 
   /// The dimension of this list is same to the number of loops in the loop
   /// band. The n-th element of this list stores all valid tile sizes of the
   /// n-th loop in the loop band.
-  std::vector<SmallVector<unsigned, 8>> validTileSizesList;
+  std::vector<std::vector<unsigned>> validTileSizesList;
 
   /// Holds the total number of valid tile size combinations.
   unsigned validTileConfigNum;
@@ -111,7 +112,7 @@ struct FuncDesignPoint {
   }
 
   explicit FuncDesignPoint(int64_t latency, int64_t dspNum,
-                           SmallVector<LoopDesignPoint, 4> &points)
+                           std::vector<LoopDesignPoint> &points)
       : latency(latency), dspNum(dspNum) {
     loopDesignPoints = points;
   }
@@ -119,13 +120,13 @@ struct FuncDesignPoint {
   int64_t latency;
   int64_t dspNum;
 
-  SmallVector<LoopDesignPoint, 4> loopDesignPoints;
+  std::vector<LoopDesignPoint> loopDesignPoints;
 };
 
 class FuncDesignSpace {
 public:
   explicit FuncDesignSpace(func::FuncOp func,
-                           SmallVector<LoopDesignSpace, 4> &loopDesignSpaces,
+                           std::vector<LoopDesignSpace> loopDesignSpaces,
                            ScaleHLSEstimator &estimator, unsigned maxDspNum)
       : func(func), loopDesignSpaces(loopDesignSpaces), estimator(estimator),
         maxDspNum(maxDspNum) {
@@ -143,15 +144,15 @@ public:
   void dumpFuncDesignSpace(StringRef csvFilePath);
   bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath);
 
-  SmallVector<FuncDesignPoint, 16> paretoPoints;
+  std::vector<FuncDesignPoint> paretoPoints;
 
   /// Associated function, loop design spaces, and estimator.
   func::FuncOp func;
-  SmallVector<LoopDesignSpace, 4> &loopDesignSpaces;
+  std::vector<LoopDesignSpace> loopDesignSpaces;
   ScaleHLSEstimator &estimator;
   unsigned maxDspNum;
 
-  SmallVector<AffineForOp, 4> targetLoops;
+  std::vector<AffineForOp> targetLoops;
 };
 
 struct HierFuncDesignPoint {
@@ -194,7 +195,7 @@ public:
   void dumpHierFuncDesignSpace(StringRef csvFilePath);
   bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath);
 
-  SmallVector<HierFuncDesignPoint, 16> paretoPoints;
+  std::vector<HierFuncDesignPoint> paretoPoints;
 
   func::FuncOp func;
   FuncDesignSpace &funcDesignSpace;

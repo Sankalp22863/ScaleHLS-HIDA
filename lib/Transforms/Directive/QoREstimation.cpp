@@ -673,6 +673,10 @@ TimingAttr ScaleHLSEstimator::estimateBlock(Block &block, int64_t begin) {
     // before it, even if no actual dependency exists between them.
     if (isa<mlir::AffineForOp>(op))
       opBegin = max(opBegin, blockEnd);
+    // Also treat call ops as serialized. Sub functions could be scheduled in parallel,
+    // But for now this is simple to implement.
+    if (isa<func::CallOp>(op))
+      opBegin = max(opBegin, blockEnd);
 
     // Check memory dependencies of the operation and update schedule level.
     for (auto operand : op->getOperands()) {
@@ -745,11 +749,20 @@ TimingAttr ScaleHLSEstimator::estimateBlock(Block &block, int64_t begin) {
     }
 
     // Estimate the current operation.
-    if (dispatchVisitor(op, opBegin))
-      opEnd = max(opEnd, getTiming(op).getEnd());
-    else {
-      op->emitError("Failed to estimate op");
-      return TimingAttr();
+    if (isNoTouch(op) && isa<func::CallOp>(op)) { // do not descend into call ops, they should already be estimated
+      LLVM_DEBUG(llvm::errs() << "No touch operation: " << op->getName() << "\n");
+      LLVM_DEBUG(llvm::errs() << "Op begin: " << opBegin << "\n");
+      LLVM_DEBUG(llvm::errs() << "Latency: " << getTiming(op).getLatency() << "\n");
+      auto latency = getTiming(op).getLatency();
+      opEnd = latency + opBegin;
+      setTiming(op, opBegin, opEnd, latency, latency);
+    } else {
+      if (dispatchVisitor(op, opBegin))
+        opEnd = max(opEnd, getTiming(op).getEnd());
+      else {
+        op->emitError("Failed to estimate op");
+        return TimingAttr();
+      }
     }
 
     // Update the block schedule end and begin.
