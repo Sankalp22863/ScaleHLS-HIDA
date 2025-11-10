@@ -1366,7 +1366,7 @@ FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool dir
   funcSpace.dumpFuncDesignSpace(funcCsvFilePath);
 
   // Export sampled pareto points MLIR source.
-  funcSpace.exportParetoDesigns(outputNum, outputRootPath);
+  //funcSpace.exportParetoDesigns(outputNum, outputRootPath);
 
   // Apply the best function design point under the constraints.
   for (auto &funcPoint : funcSpace.paretoPoints) {
