@@ -200,13 +200,13 @@ static void updateParetoPoints(ContainerType &paretoPoints,
 //===----------------------------------------------------------------------===//
 
 static void emitTileListDebugInfo(FactorList tileList) {
-  LLVM_DEBUG(llvm::dbgs() << "(";
+  LLVM_DEBUG(llvm::dbgs() << "Tile info: (";
              for (unsigned i = 0, e = tileList.size(); i < e; ++i) {
                llvm::dbgs() << tileList[i];
                if (i != e - 1)
                  llvm::dbgs() << ",";
                else
-                 llvm::dbgs() << ") ";
+                 llvm::dbgs() << ")\n";
              });
 }
 

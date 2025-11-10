@@ -221,8 +221,8 @@ void scalehls::registerHIDAPyTorchDSEPipeline() {
           return;
 
         // Place dataflow buffers.
-        pm.addPass(
-            scalehls::createPlaceDataflowBufferPass(opts.placeExternalBuffer));
+        pm.addPass(scalehls::createPlaceDataflowBufferPass(
+            opts.externalBufferThreshold, opts.placeExternalBuffer));
 
         // if (opts.vectorize) {
         //   pm.addPass(mlir::createSuperVectorizePass({2}));
@@ -237,7 +237,8 @@ void scalehls::registerHIDAPyTorchDSEPipeline() {
         pm.addPass(bufferization::createBufferLoopHoistingPass());
         pm.addPass(scalehls::createAffineLoopPerfectionPass());
         pm.addPass(scalehls::createAffineLoopOrderOptPass());
-        pm.addPass(scalehls::createAffineLoopTilePass(opts.loopTileSize));
+        //if (opts.loopTileSize != 1)
+        //  pm.addPass(scalehls::createAffineLoopTilePass(opts.loopTileSize));
         pm.addPass(mlir::createSimplifyAffineStructuresPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
@@ -294,6 +295,7 @@ void scalehls::registerHIDAPyTorchDSEPipeline() {
         pm.addPass(scalehls::createSimplifyAffineIfPass());
         pm.addPass(scalehls::createAffineStoreForwardPass());
         pm.addPass(scalehls::createReduceInitialIntervalPass());
+        pm.addPass(scalehls::createBufferVectorizePass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 12)
