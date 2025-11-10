@@ -181,27 +181,29 @@ class ScaleHLSExplorer;
 class HierFuncDesignSpace {
 public:
   explicit HierFuncDesignSpace(func::FuncOp func,
-                               FuncDesignSpace &funcDesignSpace,
-                               std::vector<HierFuncDesignSpace> &subHierFuncDesignSpaces,
+                               FuncDesignSpace funcDesignSpace,
+                               std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces,
                                ScaleHLSEstimator &estimator, unsigned maxDspNum)
-      : func(func), funcDesignSpace(funcDesignSpace), 
-        subHierFuncDesignSpaces(subHierFuncDesignSpaces), 
-        estimator(estimator), maxDspNum(maxDspNum) {}
+      : func(func), funcDesignSpace(std::move(funcDesignSpace)), 
+        subHierFuncDesignSpaces(std::move(subHierFuncDesignSpaces)), 
+        estimator(estimator), maxDspNum(maxDspNum), funcName(func.getName().str()) {}
 
   void combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool directiveOnly, StringRef outputRootPath, StringRef csvRootPath);
   func::FuncOp getSubFunc(func::FuncOp func, StringRef subFuncName);
-  bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint);
+  func::FuncOp getSubFuncFromModule(ModuleOp module, StringRef subFuncName);
+  bool applyOptStrategyRecursive(func::FuncOp func, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule);
 
   void dumpHierFuncDesignSpace(StringRef csvFilePath);
-  bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath);
+  bool exportParetoDesigns(unsigned outputNum, StringRef outputRootPath, ModuleOp topModule);
 
   std::vector<HierFuncDesignPoint> paretoPoints;
 
   func::FuncOp func;
-  FuncDesignSpace &funcDesignSpace;
-  std::vector<HierFuncDesignSpace> &subHierFuncDesignSpaces;
+  FuncDesignSpace funcDesignSpace;  // Store by value to avoid dangling references
+  std::vector<HierFuncDesignSpace> subHierFuncDesignSpaces;  // Store by value to avoid dangling references
   ScaleHLSEstimator &estimator;
   unsigned maxDspNum;
+  std::string funcName;
 
   //SmallVector<AffineForOp, 4> targetLoops;
 };
@@ -216,11 +218,11 @@ public:
   explicit ScaleHLSExplorer(ScaleHLSEstimator &estimator, unsigned outputNum,
                             unsigned maxDspNum, unsigned maxInitParallel,
                             unsigned maxExplParallel, unsigned maxLoopParallel,
-                            unsigned maxIterNum, float maxDistance)
+                            unsigned maxIterNum, float maxDistance, ModuleOp module)
       : estimator(estimator), outputNum(outputNum), maxDspNum(maxDspNum),
         maxInitParallel(maxInitParallel), maxExplParallel(maxExplParallel),
         maxLoopParallel(maxLoopParallel), maxIterNum(maxIterNum),
-        maxDistance(maxDistance) {}
+        maxDistance(maxDistance), topModule(cast<ModuleOp>(module->clone())) {}
 
   bool emitQoRDebugInfo(func::FuncOp func, std::string message);
 
@@ -255,6 +257,8 @@ public:
 
   // The maximum distance in the neighbor search of DSE.
   float maxDistance;
+
+  ModuleOp topModule;
 };
 
 } // namespace scalehls

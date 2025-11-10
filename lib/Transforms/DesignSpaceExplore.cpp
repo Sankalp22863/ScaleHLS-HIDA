@@ -776,6 +776,22 @@ func::FuncOp HierFuncDesignSpace::getSubFunc(func::FuncOp func, StringRef subFun
   return dyn_cast<func::FuncOp>(subFuncActual);
 }
 
+func::FuncOp HierFuncDesignSpace::getSubFuncFromModule(ModuleOp module, StringRef subFuncName) {
+  auto subFuncActual = module.lookupSymbol(subFuncName);
+  if (!subFuncActual) {
+    llvm::errs() << "[DSE] ERROR: Cannot find sub function '"
+                 << subFuncName << "' in module\n";
+    assert(false && "Cannot find sub function");
+  }
+  auto subFunc = dyn_cast<func::FuncOp>(subFuncActual);
+  if (!subFunc) {
+    llvm::errs() << "[DSE] ERROR: Symbol '" << subFuncName 
+                 << "' is not a function operation\n";
+    assert(false && "Symbol is not a function operation");
+  }
+  return subFunc;
+}
+
 void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool directiveOnly, StringRef outputRootPath, StringRef csvRootPath) {
   LLVM_DEBUG(llvm::dbgs() << "\nCombine the function design spaces for function '"
                           << func.getName() << "'...\n";);
@@ -987,10 +1003,11 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
                           << csvFilePath << "\".\n\n");
 }
 
-bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint) {
+bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule) {
   LLVM_DEBUG(llvm::dbgs() << "Apply optimization strategies to the current function '"
                           << currentFunc.getName() << "'...\n";);
   // STEP 1: Apply optimization strategies to the current function
+  dumpFuncMLIR(currentFunc, "before_optimized_func", false);
   auto funcPoint = hierFuncPoint.funcDesignPoint;
   std::vector<FactorList> tileLists;
   std::vector<unsigned> targetIIs;
@@ -1009,12 +1026,20 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
   }
   LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the current function '"
                           << currentFunc.getName() << "'.\n";);
+  dumpFuncMLIR(currentFunc, "optimized_func", false);
   // STEP 2: Apply optimization strategies to the sub functions
+  LLVM_DEBUG(llvm::dbgs() << hierFuncPoint.subHierFuncDesignPoints.size() << " sub function design points to apply optimization strategies to\n";);
+  LLVM_DEBUG(llvm::dbgs() << "Number of design spaces in the sub hierarchical function design space is " << subHierFuncDesignSpaces.size() << "\n";);
   for (unsigned i = 0; i < hierFuncPoint.subHierFuncDesignPoints.size(); ++i) {
     auto &subHierFuncPoint = hierFuncPoint.subHierFuncDesignPoints[i];
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
-    auto subFunc = getSubFunc(currentFunc, subHierFuncSpace.func.getName());
-    if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint))
+    auto subFunc = getSubFuncFromModule(parentModule, subHierFuncSpace.funcName);
+    if (!subFunc) {
+      llvm::errs() << "[DSE] ERROR: Cannot find sub function '" << subHierFuncSpace.funcName 
+                   << "' in module\n";
+      return false;
+    }
+    if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint, parentModule))
       return false;
   }
   LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the sub functions of '"
@@ -1023,7 +1048,7 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
 }
 
 bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
-                                              StringRef outputRootPath) {
+                                              StringRef outputRootPath, ModuleOp topModule) {
   unsigned paretoNum = paretoPoints.size();
   auto sampleStep = std::max(paretoNum / outputNum, (unsigned)1);
 
@@ -1033,9 +1058,12 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
     // Only export sampled points.
     if (sampleIndex % sampleStep == 0) {
       // Clone function with its module to preserve symbol table
-      auto tmpFunc = cloneFunctionWithModule(func);
+      // Clone the module and cast to ModuleOp
+      auto clonedOp = topModule->clone();
+      ModuleOp tmpModule = cast<ModuleOp>(clonedOp);
+      auto tmpFunc = getSubFuncFromModule(tmpModule, func.getName());
 
-      if (!applyOptStrategyRecursive(tmpFunc, hierFuncPoint))
+      if (!applyOptStrategyRecursive(tmpFunc, hierFuncPoint, tmpModule))
         return false;
       
       estimator.estimateFunc(tmpFunc);
@@ -1050,7 +1078,7 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
         return false;
 
       auto &os = outputFile->os();
-      os << tmpFunc << "\n";
+      os << tmpModule << "\n";
       outputFile->keep();
     }
     ++sampleIndex;
@@ -1420,7 +1448,7 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
   //if (!exploreDesignSpace(func, directiveOnly, outputRootPath, csvRootPath))
   //  return;
   auto hierFuncSpace = exploreHierDesignSpace(func, directiveOnly, outputRootPath, csvRootPath);
-  hierFuncSpace.exportParetoDesigns(outputNum, outputRootPath);
+  hierFuncSpace.exportParetoDesigns(outputNum, outputRootPath, topModule);
 }
 
 namespace {
@@ -1489,7 +1517,7 @@ struct DesignSpaceExplore : public DesignSpaceExploreBase<DesignSpaceExplore> {
     auto estimator = ScaleHLSEstimator(latencyMap, dspUsageMap, true);
     auto explorer = ScaleHLSExplorer(estimator, outputNum, maxDspNum,
                                      maxInitParallel, maxExplParallel,
-                                     maxLoopParallel, maxIterNum, maxDistance);
+                                     maxLoopParallel, maxIterNum, maxDistance, module);
 
     // Optimize the top function.
     // TODO: Support to contain sub-functions.
