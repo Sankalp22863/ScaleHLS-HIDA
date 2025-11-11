@@ -875,7 +875,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
         auto newHierFuncPoint = createHierFuncDesignPoint(funcPoint, subHierFuncPoints);
         paretoPoints.push_back(newHierFuncPoint);
       }
-      dumpHierFuncDesignPoints(func.getName(), paretoPoints, *this);
+      //dumpHierFuncDesignPoints(func.getName(), paretoPoints, *this);
     }
   }
 
