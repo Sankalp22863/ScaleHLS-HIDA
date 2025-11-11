@@ -131,8 +131,8 @@ static bool applySimplifyAffineIf(func::FuncOp func) {
 namespace {
 struct SimplifyAffineIf : public SimplifyAffineIfBase<SimplifyAffineIf> {
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Phase 12: Simplifying affine if (function: " 
-                 << getOperation().getName() << ")\n";
+    //llvm::errs() << "[HIDA Pipeline] Phase 12: Simplifying affine if (function: " 
+    //             << getOperation().getName() << ")\n";
     applySimplifyAffineIf(getOperation());
   }
 };

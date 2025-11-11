@@ -25,8 +25,8 @@ struct CreateLocalBuffer
   }
 
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Phase 8: Creating local buffers (function: " 
-                 << getOperation().getName() << ")\n";
+    //llvm::errs() << "[HIDA Pipeline] Phase 8: Creating local buffers (function: " 
+    //             << getOperation().getName() << ")\n";
     auto func = getOperation();
     auto builder = OpBuilder(func);
 

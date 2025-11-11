@@ -100,8 +100,8 @@ struct MulOpRewritePattern : public OpRewritePattern<arith::MulIOp> {
 namespace {
 struct CreateHLSPrimitive : public CreateHLSPrimitiveBase<CreateHLSPrimitive> {
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Phase 14 (cont): Creating HLS primitives (function: " 
-                 << getOperation().getName() << ")\n";
+    //llvm::errs() << "[HIDA Pipeline] Phase 14 (cont): Creating HLS primitives (function: " 
+    //             << getOperation().getName() << ")\n";
     auto func = getOperation();
 
     mlir::RewritePatternSet patterns(func.getContext());

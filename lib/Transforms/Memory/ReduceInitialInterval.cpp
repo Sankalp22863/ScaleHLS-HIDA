@@ -174,8 +174,8 @@ namespace {
 struct ReduceInitialInterval
     : public ReduceInitialIntervalBase<ReduceInitialInterval> {
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Phase 12 (cont): Reducing initial interval (function: " 
-                 << getOperation().getName() << ")\n";
+    //llvm::errs() << "[HIDA Pipeline] Phase 12 (cont): Reducing initial interval (function: " 
+    //             << getOperation().getName() << ")\n";
     auto func = getOperation();
     mlir::RewritePatternSet patterns(func.getContext());
     patterns.add<ReduceInitialIntervalPattern>(func.getContext());

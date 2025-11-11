@@ -513,7 +513,7 @@ struct ArrayPartition : public ArrayPartitionBase<ArrayPartition> {
   explicit ArrayPartition(unsigned argThreshold) { threshold = argThreshold; }
 
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Phase 14 (cont): Applying array partition\n";
+    //llvm::errs() << "[HIDA Pipeline] Phase 14 (cont): Applying array partition\n";
     auto module = getOperation();
 
     // Get the top function.

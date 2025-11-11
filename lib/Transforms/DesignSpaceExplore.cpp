@@ -378,8 +378,8 @@ bool LoopDesignSpace::evaluateTileConfig(TileConfig config) {
   auto tmpInnerLoop = tmpBand.back();
   auto info = getLoopInfo(tmpInnerLoop);
   auto resource = getResource(tmpOuterLoop);
-  LLVM_DEBUG(llvm::dbgs() << "The loop info of the inner loop is " << info << "\n";);
-  LLVM_DEBUG(llvm::dbgs() << "The resource of the outer loop is " << resource << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "The loop info of the inner loop is " << info << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "The resource of the outer loop is " << resource << "\n";);
   //if (func.getName() == "forward_node0") {
   //  dumpFuncMLIR(func, "forward_node0_after_opt", true);
   //}
@@ -406,7 +406,7 @@ bool LoopDesignSpace::evaluateTileConfig(TileConfig config) {
 
 /// Initialize the design space.
 void LoopDesignSpace::initializeLoopDesignSpace(unsigned maxInitParallel) {
-  LLVM_DEBUG(llvm::dbgs() << "Initialize the loop design space...\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Initialize the loop design space...\n";);
 
   for (TileConfig config = 0; config < validTileConfigNum; ++config) {
     auto tileList = getTileList(config);
@@ -415,12 +415,12 @@ void LoopDesignSpace::initializeLoopDesignSpace(unsigned maxInitParallel) {
     // than the maxInitParallel to improve the efficiency.
     auto parallel = std::accumulate(tileList.begin(), tileList.end(),
                                     (unsigned)1, std::multiplies<unsigned>());
-    LLVM_DEBUG(llvm::dbgs() << "The parallel of the tile list " << config << " is " << parallel << "\n";);
+    //LLVM_DEBUG(llvm::dbgs() << "The parallel of the tile list " << config << " is " << parallel << "\n";);
     if (parallel <= maxInitParallel) // || config == parallelConfig)
       evaluateTileConfig(config);
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "\n\n");
+  //LLVM_DEBUG(llvm::dbgs() << "\n\n");
   updateParetoPoints(paretoPoints, maxDspNum);
 }
 
@@ -455,8 +455,8 @@ void LoopDesignSpace::dumpLoopDesignSpace(StringRef csvFilePath) {
   }
 
   csvFile->keep();
-  LLVM_DEBUG(llvm::dbgs() << "Loop design space is dumped to file \""
-                          << csvFilePath << "\".\n\n");
+  //LLVM_DEBUG(llvm::dbgs() << "Loop design space is dumped to file \""
+  //                       << csvFilePath << "\".\n\n");
 }
 
 /// Get a random tile config which is one of the closest neighbors of "point".
@@ -573,17 +573,17 @@ void FuncDesignSpace::dumpFuncDesignSpace(StringRef csvFilePath) {
   }
 
   csvFile->keep();
-  LLVM_DEBUG(llvm::dbgs() << "Function design space is dumped to file \""
-                          << csvFilePath << "\".\n\n");
+  //LLVM_DEBUG(llvm::dbgs() << "Function design space is dumped to file \""
+  //                        << csvFilePath << "\".\n\n");
 }
 
 void FuncDesignSpace::combLoopDesignSpaces() {
-  LLVM_DEBUG(llvm::dbgs() << "Combine the loop design spaces...\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Combine the loop design spaces...\n";);
 
   // Check if there are any loop design spaces to combine.
   if (loopDesignSpaces.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "[DSE] WARNING: No loop bands found in function '" 
-                 << func.getName() << "'. Will create a default function design point.\n";);
+    //LLVM_DEBUG(llvm::dbgs() << "[DSE] WARNING: No loop bands found in function '" 
+    //                 << func.getName() << "'. Will create a default function design point.\n";);
     estimator.estimateFunc(func);
     auto latency = getTiming(func).getLatency();
     auto dspNum = getResource(func).getDsp();
@@ -773,7 +773,7 @@ func::CallOp getSubFuncCallOp(func::FuncOp func, StringRef subFuncName) {
 }
 
 void setTimingAndResourceSubFunc(func::FuncOp func, func::FuncOp subFunc, int64_t latency, int64_t dspNum) {
-  LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << subFunc.getName() << " of function " << func.getName() << " with latency " << latency << " and dsp num " << dspNum << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Annotating the sub function " << subFunc.getName() << " of function " << func.getName() << " with latency " << latency << " and dsp num " << dspNum << "\n";);
   //setTiming(subFunc, -1, -1, latency, -1);
   //setResource(subFunc, -1, dspNum, -1);
   auto callOpSubFunc = getSubFuncCallOp(func, subFunc.getName());
@@ -853,7 +853,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
       setTimingAndResourceSubFunc(func, otherSubFunc, otherSubFuncPoint.latency, otherSubFuncPoint.dspNum);
     }
     
-    LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the first hierarchical function design space. There are " << subHierFuncDesignSpaces[0].paretoPoints.size() << " design points.\n";);
+    LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the first sub function " << subHierFuncDesignSpaces[0].func.getName() << ". There are " << subHierFuncDesignSpaces[0].paretoPoints.size() << " design points.\n";);
     // Traverse all design points of the first hierarchical function design space.
     for (auto &subHierFuncPoint : subHierFuncDesignSpaces[0].paretoPoints) {
       auto subFunc = getSubFunc(func, subHierFuncDesignSpaces[0].func.getName());
@@ -880,6 +880,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
   }
 
   // Loop over each 
+  LLVM_DEBUG(llvm::dbgs() << "Will traverse " << subHierFuncDesignSpaces.size() << " sub function design spaces in" << func.getName() << ".\n";);
   for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
     std::vector<HierFuncDesignPoint> newParetoPoints;
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
@@ -898,6 +899,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
       }
 
       // Traverse all design points of the next hierarchical function.
+      LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the next sub function " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
       for (auto &subHierFuncPoint : subHierFuncSpace.paretoPoints) {
         // Annotate the next hierarchical function.
         auto subFunc = getSubFunc(func, subHierFuncSpace.func.getName());
@@ -956,13 +958,13 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
   // Print pareto design points.
 
   // start with current function space (loops, not hierarchical)
-  LLVM_DEBUG(llvm::dbgs() << "The number of pareto points is " << paretoPoints.size() << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "The number of pareto points is " << paretoPoints.size() << "\n";);
   for (auto &hierFuncPoint : paretoPoints) {
     auto &funcPoint = hierFuncPoint.funcDesignPoint;
     for (unsigned i = 0, e = funcDesignSpaceRef.loopDesignSpaces.size(); i < e; ++i) {
       auto &loopPoint = funcPoint.loopDesignPoints[i];
       auto &loopSpace = funcDesignSpaceRef.loopDesignSpaces[i];
-      LLVM_DEBUG(llvm::dbgs() << "The size of the tile list in the loop design space " << i << " is " << loopSpace.getTileList(loopPoint.tileConfig).size() << "\n";);
+      //LLVM_DEBUG(llvm::dbgs() << "The size of the tile list in the loop design space " << i << " is " << loopSpace.getTileList(loopPoint.tileConfig).size() << "\n";);
       for (auto size : loopSpace.getTileList(loopPoint.tileConfig))
         os << size << ",";
       os << loopPoint.targetII << ",";
@@ -1303,8 +1305,8 @@ HierFuncDesignSpace ScaleHLSExplorer::exploreHierDesignSpace(func::FuncOp func, 
   });
   
   LLVM_DEBUG(llvm::dbgs() << "Hierarchical function design spaces for sub functions created.\n";);
-  llvm::errs() << "Total " << subHierFuncDesignSpaces.size() << " sub functions explored for function '"
-               << func.getName() << "'.\n";
+  LLVM_DEBUG(llvm::dbgs() << "Total " << subHierFuncDesignSpaces.size() << " sub functions explored for function '"
+               << func.getName() << "'.\n";);
   // STEP : Combine function design spaces into current hierarchical function design space.
   //dumpFuncMLIR(func, "post_explore_design_space", false);
   HierFuncDesignSpace hierFuncSpace = HierFuncDesignSpace(func, subHierFuncDesignSpaces, estimator, maxDspNum);
@@ -1319,8 +1321,8 @@ HierFuncDesignSpace ScaleHLSExplorer::exploreHierDesignSpace(func::FuncOp func, 
 FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool directiveOnly,
                                           StringRef outputRootPath,
                                           StringRef csvRootPath) {
-  LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: conduct single function design "
-                             "space exploration...\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "----------\nStage3: conduct single function design "
+  //                           "space exploration...\n";);
 
   //dumpFuncMLIR(func, "pre_explore_design_space", false);
 
@@ -1331,8 +1333,8 @@ FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool dir
   getLoopBands(tmpFunc.front(), targetBands);
   unsigned targetNum = targetBands.size();
 
-  llvm::errs() << "[DSE] Found " << targetNum << " loop band(s) in function '" 
-               << func.getName() << "'\n";
+  //llvm::errs() << "[DSE] Found " << targetNum << " loop band(s) in function '" 
+  //              << func.getName() << "'\n";
 
   // Search for the pareto frontiers of each target loop band.
   std::vector<LoopDesignSpace> loopSpaces;
@@ -1341,10 +1343,10 @@ FuncDesignSpace ScaleHLSExplorer::exploreDesignSpace(func::FuncOp func, bool dir
         LoopDesignSpace(tmpFunc, targetBands[i], estimator, maxDspNum,
                         maxExplParallel, maxLoopParallel, directiveOnly);
 
-    LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
+    //LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
     space.initializeLoopDesignSpace(maxInitParallel);
 
-    LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
+    //LLVM_DEBUG(llvm::dbgs() << "Loop band " << i << ": ";);
     space.exploreLoopDesignSpace(maxIterNum, maxDistance);
     loopSpaces.push_back(space);
 

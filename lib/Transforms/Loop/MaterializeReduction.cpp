@@ -79,8 +79,8 @@ namespace {
 struct MaterializeReduction
     : public MaterializeReductionBase<MaterializeReduction> {
   void runOnOperation() override {
-    llvm::errs() << "[HIDA Pipeline] Pre-DSE: Materializing reductions (function: " 
-                 << getOperation().getName() << ")\n";
+    //llvm::errs() << "[HIDA Pipeline] Pre-DSE: Materializing reductions (function: " 
+    //             << getOperation().getName() << ")\n";
     auto func = getOperation();
     mlir::RewritePatternSet patterns(func.getContext());
     patterns.add<MaterializeReductionPattern>(func.getContext());
