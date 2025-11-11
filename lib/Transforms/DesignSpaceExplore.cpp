@@ -133,8 +133,8 @@ static void updateParetoPoints(ContainerType &paretoPoints,
                                unsigned maxDspNum = UINT_MAX,
                                unsigned maxBramNum = UINT_MAX) {
   using DesignPointType = typename ContainerType::value_type;
-  LLVM_DEBUG(llvm::dbgs() << "Updating pareto points with maxDspNum: " << maxDspNum << " and maxBramNum: " << maxBramNum << "\n";);
-  LLVM_DEBUG(llvm::dbgs() << "Number of pareto points before filtering: " << paretoPoints.size() << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Updating pareto points with maxDspNum: " << maxDspNum << " and maxBramNum: " << maxBramNum << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Number of pareto points before filtering: " << paretoPoints.size() << "\n";);
   // First, filter by resource constraints if provided
   if (maxDspNum != UINT_MAX || maxBramNum != UINT_MAX) {
     std::vector<DesignPointType> filteredPoints;
@@ -150,11 +150,11 @@ static void updateParetoPoints(ContainerType &paretoPoints,
         filteredPoints.push_back(point);
       }
     }
-    LLVM_DEBUG(llvm::dbgs() << "Number of pareto points in filtered points: " << filteredPoints.size() << "\n";);
+    //LLVM_DEBUG(llvm::dbgs() << "Number of pareto points in filtered points: " << filteredPoints.size() << "\n";);
     paretoPoints.assign(filteredPoints.begin(), filteredPoints.end());
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Number of pareto points after filtering: " << paretoPoints.size() << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Number of pareto points after filtering: " << paretoPoints.size() << "\n";);
 
   if (paretoPoints.empty())
     return;
@@ -882,6 +882,10 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
   // Loop over each 
   LLVM_DEBUG(llvm::dbgs() << "Will traverse " << subHierFuncDesignSpaces.size() << " sub function design spaces in" << func.getName() << ".\n";);
   for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
+    auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
+    LLVM_DEBUG(llvm::dbgs() << "sub function " << i << " is " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
+  }
+  for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
     std::vector<HierFuncDesignPoint> newParetoPoints;
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
 
@@ -899,7 +903,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
       }
 
       // Traverse all design points of the next hierarchical function.
-      LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the next sub function " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
+      //LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the next sub function " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
       for (auto &subHierFuncPoint : subHierFuncSpace.paretoPoints) {
         // Annotate the next hierarchical function.
         auto subFunc = getSubFunc(func, subHierFuncSpace.func.getName());
@@ -921,8 +925,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
     // Update pareto points after each combination, filtering by resources.
     updateParetoPoints(newParetoPoints, maxDspNum);
     paretoPoints = newParetoPoints;
-    LLVM_DEBUG(llvm::dbgs() << "Iteration " << i << " hierarchical function " << func.getName() << " design space pareto points number: "
-                            << paretoPoints.size() << "\n";);
+    LLVM_DEBUG(llvm::dbgs() << "Done traversing all design points of the sub function " << subHierFuncSpace.func.getName() << ". The number of pareto points is " << paretoPoints.size() << ".\n";);
   }
   LLVM_DEBUG(llvm::dbgs() << "\n";);
 }
@@ -984,14 +987,14 @@ void HierFuncDesignSpace::dumpHierFuncDesignSpace(StringRef csvFilePath) {
 }
 
 bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, HierFuncDesignPoint hierFuncPoint, ModuleOp parentModule, unsigned sampleIndex) {
-  LLVM_DEBUG(llvm::dbgs() << "Apply optimization strategies to the current function '"
-                          << currentFunc.getName() << "' for sample index " << sampleIndex << "...\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Apply optimization strategies to the current function '"
+  //                        << currentFunc.getName() << "' for sample index " << sampleIndex << "...\n";);
   // STEP 1: Apply optimization strategies to the current function
   //dumpFuncMLIR(currentFunc, "before_optimized_func", false);
   auto funcPoint = hierFuncPoint.funcDesignPoint;
   auto dspNum = hierFuncPoint.dspNum;
   auto latency = hierFuncPoint.latency;
-  LLVM_DEBUG(llvm::dbgs() << "The dsp num of the current function is " << dspNum << " and the latency is " << latency << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "The dsp num of the current function is " << dspNum << " and the latency is " << latency << "\n";);
   std::vector<FactorList> tileLists;
   std::vector<unsigned> targetIIs;
   auto &funcDesignSpaceRef = getFuncDesignSpace();
@@ -1008,16 +1011,16 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
                  << currentFunc.getName() << "'\n";
     return false;
   }
-  LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the current function '"
-                          << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the current function '"
+  //                        << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
   estimator.estimateFunc(currentFunc);
   auto optimizedLatency = getTiming(currentFunc).getLatency();
   auto optimizedDspNum = getResource(currentFunc).getDsp();
   LLVM_DEBUG(llvm::dbgs() << "The optimized latency of the current function is " << optimizedLatency << " and the optimized dsp num is " << optimizedDspNum << "\n";);
   //dumpFuncMLIR(currentFunc, "optimized_func", false);
   // STEP 2: Apply optimization strategies to the sub functions
-  LLVM_DEBUG(llvm::dbgs() << hierFuncPoint.subHierFuncDesignPoints.size() << " sub function design points to apply optimization strategies to\n";);
-  LLVM_DEBUG(llvm::dbgs() << "Number of design spaces in the sub hierarchical function design space is " << subHierFuncDesignSpaces.size() << "\n";);
+  //LLVM_DEBUG(llvm::dbgs() << hierFuncPoint.subHierFuncDesignPoints.size() << " sub function design points to apply optimization strategies to\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Number of design spaces in the sub hierarchical function design space is " << subHierFuncDesignSpaces.size() << "\n";);
   for (unsigned i = 0; i < hierFuncPoint.subHierFuncDesignPoints.size(); ++i) {
     auto &subHierFuncPoint = hierFuncPoint.subHierFuncDesignPoints[i];
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
@@ -1030,8 +1033,8 @@ bool HierFuncDesignSpace::applyOptStrategyRecursive(func::FuncOp currentFunc, Hi
     if (!subHierFuncSpace.applyOptStrategyRecursive(subFunc, subHierFuncPoint, parentModule, sampleIndex))
       return false;
   }
-  LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the sub functions of '"
-                          << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
+  //LLVM_DEBUG(llvm::dbgs() << "Optimization strategies applied to the sub functions of '"
+  //                        << currentFunc.getName() << "' for sample index " << sampleIndex << ".\n";);
   return true;
 }
 
@@ -1042,6 +1045,7 @@ bool HierFuncDesignSpace::exportParetoDesigns(unsigned outputNum,
 
   // Traverse all detected pareto points.
   unsigned sampleIndex = 0;
+  LLVM_DEBUG(llvm::dbgs() << "Will export " << outputNum << " pareto design points of function " << func.getName() << ".\n";);
   for (auto &hierFuncPoint : paretoPoints) {
     // Only export sampled points.
     if (sampleIndex % sampleStep == 0) {
@@ -1427,7 +1431,7 @@ void ScaleHLSExplorer::applyDesignSpaceExplore(func::FuncOp func,
   }
   // Simplify loop nests by unrolling.
   if (!simplifyLoopNests(func)) {
-    assert(false && "Failed to simplify loop nests");
+    assert(false && "Failed to simplify loop nests, you may need to increase the max DSPs");
     return;
   }
 
