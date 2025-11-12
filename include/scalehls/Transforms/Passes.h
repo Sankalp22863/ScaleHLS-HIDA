@@ -28,6 +28,7 @@ enum CreateSubviewMode { Point, Reduction };
 
 void registerScaleHLSDSEPipeline();
 void registerHIDAPyTorchPipeline();
+void registerPreporcessingPipeline();
 void registerHIDAPyTorchPipelinePost();
 void registerHIDACppPipeline();
 void registerTransformsPasses();

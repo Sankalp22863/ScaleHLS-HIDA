@@ -17,9 +17,11 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 #include "scalehls/Transforms/Passes.h"
+#include "scalehls/Transforms/CustomPipeline.h"
 
 using namespace mlir;
 using namespace scalehls;
+using namespace codesignhls;
 
 namespace {
 #define GEN_PASS_REGISTRATION
@@ -142,6 +144,10 @@ void scalehls::registerHIDAPyTorchPipeline() {
       "hida-pytorch-pipeline",
       "Compile TOSA (from Torch-MLIR) to HLS C++ with HIDA",
       [](OpPassManager &pm, const HIDAPyTorchPipelineOptions &opts) {
+        
+        
+        pm.addPass(codesignhls::createLowerMaximumFPass());
+        
         if (opts.tosaInput) {
           // TOSA optimization.
           pm.addPass(scalehls::createTosaSimplifyGraphPass());
@@ -304,6 +310,17 @@ void scalehls::registerHIDAPyTorchPipeline() {
         pm.addPass(scalehls::createArrayPartitionPass());
         pm.addPass(scalehls::createCreateHLSPrimitivePass());
         pm.addPass(mlir::createCanonicalizerPass());
+      });
+}
+
+void scalehls::registerPreporcessingPipeline() {
+  llvm::errs() << "[LowerMaximumF] arith.maximumf ops\n";
+  PassPipelineRegistration<HIDAPyTorchPipelineOptions>(
+      "codesign-pytorch-preprocessing-pipeline",
+      "Compile TOSA (from Torch-MLIR) to HLS C++ with HIDA",
+      [](OpPassManager &pm, const HIDAPyTorchPipelineOptions &opts) {
+        pm.addNestedPass<mlir::func::FuncOp>(
+            codesignhls::createLowerMaximumFPass());
       });
 }
 
@@ -478,9 +495,11 @@ void scalehls::registerHIDACppPipeline() {
 }
 
 void scalehls::registerTransformsPasses() {
+  registerPreporcessingPipeline();
   registerScaleHLSDSEPipeline();
   registerHIDAPyTorchPipeline();
   registerHIDAPyTorchPipelinePost();
   registerHIDACppPipeline();
   registerPasses();
+  llvm::errs() << "Passes DONE!\n";
 }
