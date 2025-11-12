@@ -840,7 +840,14 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
     return;
   }
 
+  LLVM_DEBUG(llvm::dbgs() << "Will traverse " << subHierFuncDesignSpaces.size() << " sub function design spaces in" << func.getName() << ".\n";);
+  for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
+    auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
+    LLVM_DEBUG(llvm::dbgs() << "sub function " << i << " is " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
+  }
+
   // Initialize the hierarchical function design space with the first hierarchical function design space.
+  LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the first sub function " << subHierFuncDesignSpaces[0].func.getName() << ". There are " << subHierFuncDesignSpaces[0].paretoPoints.size() << " design points.\n";);
   for (auto &subHierFuncPoint : subHierFuncDesignSpaces[0].paretoPoints) {
     auto subFunc = getSubFunc(func, subHierFuncDesignSpaces[0].func.getName());
     setTimingAndResourceSubFunc(func, subFunc, subHierFuncPoint.latency, subHierFuncPoint.dspNum);
@@ -853,7 +860,6 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
       setTimingAndResourceSubFunc(func, otherSubFunc, otherSubFuncPoint.latency, otherSubFuncPoint.dspNum);
     }
     
-    LLVM_DEBUG(llvm::dbgs() << "Traversing all design points of the first sub function " << subHierFuncDesignSpaces[0].func.getName() << ". There are " << subHierFuncDesignSpaces[0].paretoPoints.size() << " design points.\n";);
     // Traverse all design points of the first hierarchical function design space.
     for (auto &subHierFuncPoint : subHierFuncDesignSpaces[0].paretoPoints) {
       auto subFunc = getSubFunc(func, subHierFuncDesignSpaces[0].func.getName());
@@ -879,12 +885,7 @@ void HierFuncDesignSpace::combFuncDesignSpaces(ScaleHLSExplorer &explorer, bool 
     }
   }
 
-  // Loop over each 
-  LLVM_DEBUG(llvm::dbgs() << "Will traverse " << subHierFuncDesignSpaces.size() << " sub function design spaces in" << func.getName() << ".\n";);
-  for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
-    auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
-    LLVM_DEBUG(llvm::dbgs() << "sub function " << i << " is " << subHierFuncSpace.func.getName() << ". There are " << subHierFuncSpace.paretoPoints.size() << " design points.\n";);
-  }
+  // Loop over the rest of the sub function design spaces.
   for (unsigned i = 0, e = subHierFuncDesignSpaces.size(); i < e; ++i) {
     std::vector<HierFuncDesignPoint> newParetoPoints;
     auto &subHierFuncSpace = subHierFuncDesignSpaces[i];
